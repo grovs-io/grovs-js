@@ -1,0 +1,53 @@
+<!-- public/index.html -->
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>My Library Example</title>
+  </head>
+  <style>
+    body {
+      background-color: white;
+    }
+  </style>
+  <body>
+    <script src="/dist/grovs.js"></script>
+
+    <script>
+      const APIKey =
+        "grovst_06e36086dad3e934289560e3ca59527282030868f8c844629516c6e6c67bbf1f";
+
+      const sdk = new Grovs.default(APIKey, false, (data) => {
+        console.log("Link data:", data); // Callback to handle data from Grovs
+      });
+
+      sdk.start(() => {
+        console.log("started");
+        sdk.setUserAttributes({ test: "web" });
+      });
+
+      function getLink() {
+        sdk.createLink(
+          "Test Title",
+          "Test Subtitle",
+          "https://example.com/image.jpg",
+          { invited_by: "test" },
+          (successData) => {
+            console.log("Link created successfully:", successData);
+          },
+          (errorData) => {
+            console.error("Error creating link:", errorData);
+          }
+        );
+      }
+
+      // Execute setUserDetails after 2 seconds
+      setTimeout(getLink, 2000);
+
+      // Set the user attributes
+    </script>
+    test test test
+  </body>
+</html>
