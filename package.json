@@ -1,6 +1,6 @@
 {
   "name": "grovs",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Grovs generates dynamic links, tracks attributions, and analyzes referrals, seamlessly directing users to your app or the app store for downloads.",
   "main": "dist/grovs.js",
   "scripts": {
