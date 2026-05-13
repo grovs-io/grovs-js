@@ -1,4 +1,14 @@
-# Grovs SDK Documentation
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://s3.eu-north-1.amazonaws.com/grovs.io/full-white.svg">
+    <img src="https://s3.eu-north-1.amazonaws.com/grovs.io/full-black.svg" width="120" alt="Grovs">
+  </picture>
+</p>
+<p align="center">
+  <a href="#"><img src="https://img.shields.io/badge/types-included-4F46E5?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript"/></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/grovs-io/grovs-js?style=flat-square&color=4F46E5" alt="MIT License"/></a>
+  <a href="https://github.com/grovs-io/grovs-js/stargazers"><img src="https://img.shields.io/github/stars/grovs-io/grovs-js?style=flat-square&color=4F46E5" alt="GitHub stars"/></a>
+</p>
 
 ## Overview
 
