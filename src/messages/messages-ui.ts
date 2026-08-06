@@ -5,7 +5,12 @@ const LIST_MODAL_ID = 'Grovs-modal';
 const PAGE_MODAL_ID = 'Grovs-page-modal';
 
 /**
- * Ported from src/grovs_ui_helper.js.
+ * The messages modal, rendered into a shadow root.
+ *
+ * v1 injected a raw HTML string plus a Google Fonts <link> straight into the
+ * host page, so it inherited whatever CSS the host had, leaked its own onto
+ * the host, and added a third-party request on every open. A shadow root
+ * isolates styles in both directions and the font goes.
  *
  * Three changes from v1, all defect fixes rather than redesign:
  *   - the debug `background = "red"` at grovs_ui_helper.js:240 is gone;
@@ -16,14 +21,13 @@ const PAGE_MODAL_ID = 'Grovs-page-modal';
  *   - the list element is held explicitly. v1 referenced an undeclared
  *     `itemList` binding at grovs_ui_helper.js:360 and only worked because
  *     browsers expose elements with an id as named properties of window.
- *
- * Phase 3 rebuilds this in shadow DOM so it stops inheriting host CSS.
  */
 export class MessagesUI {
   private page = 1;
   private isLoading = false;
   private listElement: HTMLElement | null = null;
   private overlay: HTMLElement | null = null;
+  private host: HTMLElement | null = null;
 
   constructor(
     private readonly doc: Document,
@@ -34,8 +38,12 @@ export class MessagesUI {
   async showMessagesList(): Promise<void> {
     if (this.doc.getElementById(LIST_MODAL_ID)) return;
 
+    const host = this.doc.createElement('div');
+    host.id = LIST_MODAL_ID;
+    const root = host.attachShadow ? host.attachShadow({ mode: 'open' }) : null;
+
     const overlay = this.doc.createElement('div');
-    overlay.id = LIST_MODAL_ID;
+    overlay.className = 'grovs-overlay';
     Object.assign(overlay.style, {
       position: 'fixed',
       top: '15%',
@@ -98,7 +106,11 @@ export class MessagesUI {
       }
     });
 
-    this.doc.body.appendChild(overlay);
+    if (root) root.appendChild(overlay);
+    else host.appendChild(overlay);
+    this.doc.body.appendChild(host);
+
+    this.host = host;
     this.overlay = overlay;
     this.listElement = list;
     this.page = 1;
@@ -160,9 +172,21 @@ export class MessagesUI {
   }
 
   close(): void {
-    this.overlay?.remove();
+    this.host?.remove();
+    this.host = null;
     this.overlay = null;
     this.listElement = null;
+  }
+
+  /**
+   * Opens every message the console flagged for automatic display.
+   *
+   * v1 implemented this and commented the body out
+   * (grovs_manager.js:229-242); iOS ships it working.
+   */
+  async displayAutomaticMessages(): Promise<void> {
+    const messages = await this.service.messagesForAutomaticDisplay();
+    for (const message of messages) this.openPage(message);
   }
 
   private async loadMessages(): Promise<void> {

@@ -9,6 +9,7 @@ import { IdentityStore } from '../storage/identity';
 import { PersistedQueue } from '../storage/persisted-queue';
 import { EventsHandler } from '../events/events-handler';
 import { CustomEventsHandler } from '../events/custom-events-handler';
+import { PaymentEventsHandler, type CustomPurchase } from '../events/payment-events-handler';
 import { LifecycleTracker } from '../tracking/lifecycle';
 import { AutoScreenTracker, type ScreenNameProvider } from '../tracking/auto-screen-tracker';
 import { ScreenAliases } from '../tracking/screen-aliases';
@@ -53,6 +54,7 @@ export class GrovsClient {
   private readonly aliases = new ScreenAliases();
   private readonly screens: AutoScreenTracker;
   private readonly autoStartEvents: boolean;
+  private payments: PaymentEventsHandler | null = null;
 
   private enabled = true;
   private readonly receivedPayloads: Record<string, unknown>[] = [];
@@ -215,6 +217,12 @@ export class GrovsClient {
 
   setGlobalTags(tags: string[] | null): void {
     this.custom.setGlobalTags(tags);
+  }
+
+  /** Enterprise deployments only; a 404 reports the reason (spec B4). */
+  logCustomPurchase(purchase: CustomPurchase): Promise<boolean> {
+    this.payments ??= new PaymentEventsHandler(this);
+    return this.payments.logCustomPurchase(purchase);
   }
 
   /** Syncs the map to the dashboard so aliases appear there too (spec B8). */

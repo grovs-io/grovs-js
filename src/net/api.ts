@@ -20,11 +20,28 @@ export interface DeviceDetails {
   session_id?: string;
 }
 
+/** Per-platform redirect overrides, mirroring CustomRedirects on iOS. */
+export interface CustomRedirects {
+  ios?: { link?: string; openAppIfInstalled?: boolean };
+  android?: { link?: string; openAppIfInstalled?: boolean };
+  desktop?: { link?: string };
+}
+
 export interface CreateLinkParams {
   title?: string;
   subtitle?: string;
   imageURL?: string;
   data?: Record<string, unknown>;
+  tags?: string[];
+  customRedirects?: CustomRedirects;
+  showPreviewiOS?: boolean;
+  showPreviewAndroid?: boolean;
+  /** Campaign name, e.g. "BlackFriday2025". */
+  trackingCampaign?: string;
+  /** Traffic source, e.g. "instagram", "newsletter". */
+  trackingSource?: string;
+  /** Medium, e.g. "cpc", "email", "social". */
+  trackingMedium?: string;
 }
 
 /**
@@ -81,13 +98,26 @@ export class ApiService {
     return this.post(PATHS.dataForDeviceAndPath, { ...details, path });
   }
 
+  /** The full 11-parameter surface, matching Grovs.generateLink on iOS. */
   createLink(params: CreateLinkParams): Promise<TransportResponse> {
     const body: Record<string, unknown> = {};
     if (params.title) body['title'] = params.title;
     if (params.subtitle) body['subtitle'] = params.subtitle;
     if (params.imageURL) body['image_url'] = params.imageURL;
-    // The backend permits :data as a scalar param, so it arrives as a string.
+    // The backend permits :data and :tags as scalar params, so both arrive
+    // as JSON strings rather than as structures.
     if (params.data) body['data'] = JSON.stringify(params.data);
+    if (params.tags && params.tags.length > 0) body['tags'] = JSON.stringify(params.tags);
+    if (params.customRedirects) {
+      body['custom_redirects'] = JSON.stringify(serializeRedirects(params.customRedirects));
+    }
+    if (typeof params.showPreviewiOS === 'boolean') body['show_preview_ios'] = params.showPreviewiOS;
+    if (typeof params.showPreviewAndroid === 'boolean') {
+      body['show_preview_android'] = params.showPreviewAndroid;
+    }
+    if (params.trackingCampaign) body['tracking_campaign'] = params.trackingCampaign;
+    if (params.trackingSource) body['tracking_source'] = params.trackingSource;
+    if (params.trackingMedium) body['tracking_medium'] = params.trackingMedium;
     return this.post(PATHS.createLink, body);
   }
 
@@ -168,4 +198,20 @@ export class ApiService {
   private headers(): Record<string, string> {
     return buildHeaders(this.config, this.context, this.identifierProvider());
   }
+}
+
+/** Snake-cases the redirect override keys the backend expects. */
+function serializeRedirects(redirects: CustomRedirects): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const platform of ['ios', 'android', 'desktop'] as const) {
+    const entry = redirects[platform];
+    if (!entry) continue;
+    const serialized: Record<string, unknown> = {};
+    if (entry.link) serialized['link'] = entry.link;
+    if ('openAppIfInstalled' in entry && typeof entry.openAppIfInstalled === 'boolean') {
+      serialized['open_app_if_installed'] = entry.openAppIfInstalled;
+    }
+    if (Object.keys(serialized).length > 0) out[platform] = serialized;
+  }
+  return out;
 }

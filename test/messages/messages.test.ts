@@ -116,6 +116,11 @@ describe('MessagesUI', () => {
     expect(document.getElementById('Grovs-modal')).not.toBeNull();
   });
 
+  /** The modal lives in a shadow root, so host-document queries cannot see it. */
+  function shadow(): ShadowRoot | null {
+    return document.getElementById('Grovs-modal')?.shadowRoot ?? null;
+  }
+
   it('renders one row per message', async () => {
     const transport = new FakeTransport();
     const client = await authedClient(transport);
@@ -131,7 +136,7 @@ describe('MessagesUI', () => {
     });
 
     await makeUI(client).showMessagesList();
-    expect(document.querySelectorAll('.grovs-item')).toHaveLength(2);
+    expect(shadow()?.querySelectorAll('.grovs-item')).toHaveLength(2);
   });
 
   it('escapes message text rather than injecting it as HTML', async () => {
@@ -148,8 +153,8 @@ describe('MessagesUI', () => {
     });
 
     await makeUI(client).showMessagesList();
-    expect(document.querySelector('.grovs-item img')).toBeNull();
-    expect(document.querySelector('.grovs-item-title')?.textContent).toBe(
+    expect(shadow()?.querySelector('.grovs-item img')).toBeNull();
+    expect(shadow()?.querySelector('.grovs-item-title')?.textContent).toBe(
       '<img src=x onerror=alert(1)>',
     );
   });
@@ -190,7 +195,7 @@ describe('MessagesUI', () => {
     transport.enqueue({ ok: true, status: 200, body: { notifications: [] } });
 
     await makeUI(client).showMessagesList();
-    expect(document.getElementById('Grovs-modal')?.textContent).toContain('No messages yet');
+    expect(shadow()?.textContent).toContain('No messages yet');
   });
 
   it('does not mount a second modal when already open', async () => {
