@@ -22,15 +22,5 @@ export default tseslint.config(
     files: ['src/core/environment.ts'],
     rules: { 'no-restricted-globals': 'off' },
   },
-  {
-    ignores: [
-      'dist/**',
-      'node_modules/**',
-      'public/**',
-      // The v1 JavaScript sources, still present while their TypeScript
-      // replacements are written. Removed from this list — and from the
-      // repository — in plan Task 12.
-      'src/**/*.js',
-    ],
-  },
+  { ignores: ['dist/**', 'node_modules/**', 'public/**'] },
 );
