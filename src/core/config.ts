@@ -12,6 +12,9 @@ export interface GrovsConfig {
   baseURL?: string;
   /** Opt-in cross-subdomain cookie scope (spec T11). Host-only when absent. */
   cookieDomain?: string;
+  /** SPA route changes fire screen views automatically. Defaults to true,
+   *  matching iOS. */
+  autoTrackScreenViews?: boolean;
   debugLevel?: LogLevel;
   onDeeplink?: DeeplinkCallback;
   onError?: ErrorCallback;
@@ -22,6 +25,7 @@ export interface ResolvedConfig {
   testEnvironment: boolean;
   endpoint: string;
   cookieDomain?: string;
+  autoTrackScreenViews: boolean;
   debugLevel: LogLevel;
   onDeeplink: DeeplinkCallback | null;
   onError: ErrorCallback | null;
@@ -41,6 +45,7 @@ export function resolveConfig(input: GrovsConfig): ResolvedConfig {
     apiKey,
     testEnvironment: input.testEnvironment ?? false,
     endpoint: `${base}${API_PATH}`,
+    autoTrackScreenViews: input.autoTrackScreenViews ?? true,
     debugLevel: input.debugLevel ?? 'error',
     onDeeplink: input.onDeeplink ?? null,
     onError: input.onError ?? null,

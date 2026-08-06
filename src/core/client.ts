@@ -8,7 +8,10 @@ import { resolveStorage, type Storage } from '../storage/storage';
 import { IdentityStore } from '../storage/identity';
 import { PersistedQueue } from '../storage/persisted-queue';
 import { EventsHandler } from '../events/events-handler';
+import { CustomEventsHandler } from '../events/custom-events-handler';
 import { LifecycleTracker } from '../tracking/lifecycle';
+import { AutoScreenTracker, type ScreenNameProvider } from '../tracking/auto-screen-tracker';
+import { ScreenAliases } from '../tracking/screen-aliases';
 import { SessionManager } from './session';
 import { SystemClock, type Clock } from './clock';
 import {
@@ -45,7 +48,10 @@ export class GrovsClient {
   private readonly session: SessionManager;
   private readonly queue: PersistedQueue;
   private readonly events: EventsHandler;
+  private readonly custom: CustomEventsHandler;
   private readonly lifecycle: LifecycleTracker;
+  private readonly aliases = new ScreenAliases();
+  private readonly screens: AutoScreenTracker;
   private readonly autoStartEvents: boolean;
 
   private enabled = true;
@@ -88,10 +94,21 @@ export class GrovsClient {
       currentPath: () => this.deeplinks.getStoredPath(),
       isEnabled: () => this.enabled,
     });
+    this.custom = new CustomEventsHandler({
+      events: this.events,
+      session: this.session,
+      clock: this.clock,
+      logger: this.logger,
+      currentPath: () => this.deeplinks.getStoredPath(),
+    });
     this.lifecycle = new LifecycleTracker({
       clock: this.clock,
       onEngagement: (seconds) => this.events.log('time_spent', seconds),
       onExit: () => this.events.flushOnExit(),
+    });
+    this.screens = new AutoScreenTracker({
+      aliases: this.aliases,
+      onScreen: (name) => this.custom.trackScreenView(name),
     });
 
     this.context.linksquaredId = this.readIdentity();
@@ -181,6 +198,37 @@ export class GrovsClient {
       lastStart: lastStart !== null && Number.isFinite(lastStart) ? lastStart : null,
     });
     this.lifecycle.start();
+    if (this.config.autoTrackScreenViews) this.screens.start();
+  }
+
+  // MARK: Analytics
+
+  track(name: string, properties?: Record<string, unknown>, tags?: string[]): void {
+    if (!this.enabled) return;
+    this.custom.track(name, properties, tags);
+  }
+
+  trackScreenView(screenName: string, properties?: Record<string, unknown>): void {
+    if (!this.enabled) return;
+    this.custom.trackScreenView(screenName, properties);
+  }
+
+  setGlobalTags(tags: string[] | null): void {
+    this.custom.setGlobalTags(tags);
+  }
+
+  /** Syncs the map to the dashboard so aliases appear there too (spec B8). */
+  setScreenAliases(aliases: Record<string, string>): void {
+    this.aliases.set(aliases);
+    if (this.context.authenticated) void this.aliases.sync(this.api, this.logger);
+  }
+
+  set screenNameProvider(provider: ScreenNameProvider | null) {
+    this.screens.screenNameProvider = provider;
+  }
+
+  get screenNameProvider(): ScreenNameProvider | null {
+    return this.screens.screenNameProvider;
   }
 
   /** Drains the queue immediately. For integrators facing a hard navigation. */
@@ -192,6 +240,7 @@ export class GrovsClient {
   shutdown(): void {
     this.events.stop();
     this.lifecycle.stop();
+    this.screens.stop();
   }
 
   get eventsHandler(): EventsHandler {

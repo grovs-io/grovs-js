@@ -7,6 +7,7 @@ import { getDocument } from './core/environment';
 import { Logger, type LogLevel } from './logging/logger';
 import type { CreateLinkParams } from './net/api';
 import { GrovsV1 } from './compat/v1';
+import type { ScreenNameProvider } from './tracking/auto-screen-tracker';
 
 let client: GrovsClient | null = null;
 let links: LinkGenerator | null = null;
@@ -82,6 +83,49 @@ export const Grovs = {
     client.setDebugLevel(level);
   },
 
+  // MARK: Analytics
+
+  track(name: string, properties?: Record<string, unknown>, tags?: string[]): void {
+    if (!client) return notConfigured('track');
+    client.track(name, properties, tags);
+  },
+
+  trackScreenView(screenName: string, properties?: Record<string, unknown>): void {
+    if (!client) return notConfigured('trackScreenView');
+    client.trackScreenView(screenName, properties);
+  },
+
+  setGlobalTags(tags: string[] | null): void {
+    if (!client) return notConfigured('setGlobalTags');
+    client.setGlobalTags(tags);
+  },
+
+  setScreenAliases(aliases: Record<string, string>): void {
+    if (!client) return notConfigured('setScreenAliases');
+    client.setScreenAliases(aliases);
+  },
+
+  set screenNameProvider(provider: ScreenNameProvider | null) {
+    if (!client) {
+      notConfigured('screenNameProvider');
+      return;
+    }
+    client.screenNameProvider = provider;
+  },
+
+  get screenNameProvider(): ScreenNameProvider | null {
+    return client?.screenNameProvider ?? null;
+  },
+
+  /** Drains the queue now, for integrators facing a hard navigation. */
+  flush(): Promise<void> {
+    if (!client) {
+      notConfigured('flush');
+      return Promise.resolve();
+    }
+    return client.flush();
+  },
+
   allReceivedPayloadsSinceStartup(): Record<string, unknown>[] {
     return client?.allReceivedPayloadsSinceStartup() ?? [];
   },
@@ -133,6 +177,7 @@ export type { GrovsConfig, DeeplinkCallback } from './core/config';
 export type { LogLevel, ErrorCallback } from './logging/logger';
 export type { GrovsMessage } from './messages/messages';
 export type { CreateLinkParams } from './net/api';
+export type { ScreenNameProvider, ScreenNameDecision } from './tracking/auto-screen-tracker';
 export { GrovsV1 };
 
 export default Grovs;
