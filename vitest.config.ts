@@ -19,6 +19,8 @@ export default defineConfig({
         'src/net/**': { lines: 90 },
         'src/storage/**': { lines: 90 },
         'src/links/**': { lines: 90 },
+        'src/events/**': { lines: 90 },
+        'src/tracking/**': { lines: 90 },
         'src/messages/**': { lines: 70 },
       },
     },
