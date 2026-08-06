@@ -6,6 +6,7 @@ export default defineConfig({
     // Fixed origin so getPageIdentifier() has a stable value to assert against.
     environmentOptions: { jsdom: { url: 'http://localhost:3000' } },
     include: ['test/**/*.test.ts'],
+    setupFiles: ['test/setup.ts'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json-summary'],

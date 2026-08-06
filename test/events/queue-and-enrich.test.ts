@@ -20,7 +20,7 @@ describe('enrich', () => {
   it('emits every enrichment key the contract requires', () => {
     const body = enrich(
       event({ path: 'abc', engagementTime: 12, tags: ['a'] }),
-    ) as Record<string, unknown>;
+    ) as unknown as Record<string, unknown>;
 
     for (const key of ENRICHMENT_KEYS) {
       expect(body).toHaveProperty(key);
@@ -28,23 +28,23 @@ describe('enrich', () => {
   });
 
   it('sends path, never link', () => {
-    const body = enrich(event({ path: 'abc' })) as Record<string, unknown>;
+    const body = enrich(event({ path: 'abc' })) as unknown as Record<string, unknown>;
     expect(body['path']).toBe('abc');
     expect(body).not.toHaveProperty('link');
   });
 
   it('preserves event_id verbatim', () => {
-    const body = enrich(event({ id: 'stable-id' })) as Record<string, unknown>;
+    const body = enrich(event({ id: 'stable-id' })) as unknown as Record<string, unknown>;
     expect(body['event_id']).toBe('stable-id');
   });
 
   it('formats created_at as ISO 8601', () => {
-    const body = enrich(event({ createdAt: 1_700_000_000_000 })) as Record<string, unknown>;
+    const body = enrich(event({ createdAt: 1_700_000_000_000 })) as unknown as Record<string, unknown>;
     expect(body['created_at']).toBe('2023-11-14T22:13:20.000Z');
   });
 
   it('emits event for system events and event_name for custom ones', () => {
-    const system = enrich(event()) as Record<string, unknown>;
+    const system = enrich(event()) as unknown as Record<string, unknown>;
     expect(system['event']).toBe('app_open');
     expect(system).not.toHaveProperty('event_name');
 
@@ -54,7 +54,7 @@ describe('enrich', () => {
       createdAt: 1,
       sessionId: 's',
       properties: { sku: 'x' },
-    }) as Record<string, unknown>;
+    }) as unknown as Record<string, unknown>;
     expect(custom['event_name']).toBe('purchase');
     expect(custom['properties']).toEqual({ sku: 'x' });
     expect(custom).not.toHaveProperty('event');
@@ -62,7 +62,7 @@ describe('enrich', () => {
 
   it('caps tags at 20', () => {
     const tags = Array.from({ length: 25 }, (_, i) => `tag-${i}`);
-    const body = enrich(event({ tags })) as Record<string, unknown>;
+    const body = enrich(event({ tags })) as unknown as Record<string, unknown>;
     expect((body['tags'] as string[]).length).toBe(20);
   });
 
@@ -74,21 +74,21 @@ describe('enrich', () => {
       createdAt: 1,
       sessionId: 's',
       tags: [long],
-    }) as Record<string, unknown>;
+    }) as unknown as Record<string, unknown>;
 
     expect((body['event_name'] as string).length).toBe(255);
     expect((body['tags'] as string[])[0]?.length).toBe(255);
   });
 
   it('omits optional keys that have no value', () => {
-    const body = enrich(event()) as Record<string, unknown>;
+    const body = enrich(event()) as unknown as Record<string, unknown>;
     expect(body).not.toHaveProperty('path');
     expect(body).not.toHaveProperty('engagement_time');
     expect(body).not.toHaveProperty('tags');
   });
 
   it('keeps an engagement time of zero, which is a real measurement', () => {
-    const body = enrich(event({ engagementTime: 0 })) as Record<string, unknown>;
+    const body = enrich(event({ engagementTime: 0 })) as unknown as Record<string, unknown>;
     expect(body['engagement_time']).toBe(0);
   });
 });

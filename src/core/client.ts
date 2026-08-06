@@ -5,15 +5,32 @@ import { FetchTransport } from '../net/fetch-transport';
 import type { Transport } from '../net/transport';
 import { DeeplinkResolver } from '../links/deeplink';
 import { resolveStorage, type Storage } from '../storage/storage';
-import { getNavigator, getPageIdentifier, getWindow, isBrowser } from './environment';
+import { IdentityStore } from '../storage/identity';
+import { PersistedQueue } from '../storage/persisted-queue';
+import { EventsHandler } from '../events/events-handler';
+import { LifecycleTracker } from '../tracking/lifecycle';
+import { SessionManager } from './session';
+import { SystemClock, type Clock } from './clock';
+import {
+  getFingerprint,
+  getNavigator,
+  getPageIdentifier,
+  getWindow,
+  isBrowser,
+} from './environment';
 import { resolveConfig, type GrovsConfig, type ResolvedConfig } from './config';
 import { Context } from './context';
 
 export const LINKSQUARED_STORAGE_KEY = 'linksquared';
+const OPENS_KEY = 'grovs_opens';
+const LAST_START_KEY = 'grovs_last_start';
 
 export interface ClientDeps {
   transport?: Transport;
   storage?: Storage;
+  clock?: Clock;
+  /** Suppresses timers and lifecycle listeners in tests that do not need them. */
+  autoStartEvents?: boolean;
 }
 
 export class GrovsClient {
@@ -23,6 +40,13 @@ export class GrovsClient {
   private readonly storage: Storage;
   private readonly api: ApiService;
   private readonly deeplinks: DeeplinkResolver;
+  private readonly identity: IdentityStore | null;
+  private readonly clock: Clock;
+  private readonly session: SessionManager;
+  private readonly queue: PersistedQueue;
+  private readonly events: EventsHandler;
+  private readonly lifecycle: LifecycleTracker;
+  private readonly autoStartEvents: boolean;
 
   private enabled = true;
   private readonly receivedPayloads: Record<string, unknown>[] = [];
@@ -35,7 +59,14 @@ export class GrovsClient {
     this.logger.setLevel(this.config.debugLevel);
     this.logger.setOnError(this.config.onError);
 
+    this.clock = deps.clock ?? new SystemClock();
+    this.autoStartEvents = deps.autoStartEvents ?? true;
+
     this.storage = deps.storage ?? resolveStorage(this.logger, this.config.cookieDomain);
+    // An injected storage means a test harness; the mirrored identity store
+    // reaches for real browser globals, so it is only built for real use.
+    this.identity = deps.storage ? null : new IdentityStore(this.config.cookieDomain);
+
     this.api = new ApiService(
       this.config,
       this.context,
@@ -44,7 +75,26 @@ export class GrovsClient {
     );
     this.deeplinks = new DeeplinkResolver(this.storage, () => getWindow()?.location.href ?? null);
 
-    this.context.linksquaredId = this.storage.get(LINKSQUARED_STORAGE_KEY);
+    this.session = new SessionManager(this.storage, this.clock);
+    this.queue = new PersistedQueue(this.storage, this.clock, (count, reason) =>
+      this.logger.warn(`Dropped ${count} queued event(s): ${reason}.`),
+    );
+    this.events = new EventsHandler({
+      api: this.api,
+      queue: this.queue,
+      session: this.session,
+      clock: this.clock,
+      logger: this.logger,
+      currentPath: () => this.deeplinks.getStoredPath(),
+      isEnabled: () => this.enabled,
+    });
+    this.lifecycle = new LifecycleTracker({
+      clock: this.clock,
+      onEngagement: (seconds) => this.events.log('time_spent', seconds),
+      onExit: () => this.events.flushOnExit(),
+    });
+
+    this.context.linksquaredId = this.readIdentity();
   }
 
   async configure(): Promise<boolean> {
@@ -72,9 +122,14 @@ export class GrovsClient {
 
     const body = (response.body ?? {}) as Record<string, unknown>;
     const linksquaredId = typeof body['linksquared'] === 'string' ? body['linksquared'] : null;
+
+    // Read before writing: whether an identifier already existed is what
+    // decides install versus reinstall, and the write below destroys the answer.
+    const hadIdentity = this.context.linksquaredId !== null;
+
     if (linksquaredId) {
       this.context.linksquaredId = linksquaredId;
-      this.storage.set(LINKSQUARED_STORAGE_KEY, linksquaredId);
+      this.writeIdentity(linksquaredId);
     }
 
     // v1 (grovs_manager.js:66-67) assigned these two backwards. Anyone who
@@ -92,10 +147,68 @@ export class GrovsClient {
     this.context.authenticated = true;
     this.logger.info('Authenticated.');
 
+    if (this.autoStartEvents) this.startEventPipeline(hadIdentity);
+
     await this.fetchPayload();
+
+    // Only now is the attribution path known, so only now may events leave.
+    this.events.onPathResolved(this.deeplinks.getStoredPath());
+
     if (this.identityDirty) void this.pushIdentity();
 
     return true;
+  }
+
+  /**
+   * Emits the launch events and starts the flush timers.
+   *
+   * The open count and last-start stamp are read before being written, because
+   * both decide which launch events fire: opens === 0 means install (or
+   * reinstall, if an identifier survived), and a last start more than seven
+   * days ago means reactivation.
+   */
+  private startEventPipeline(hadIdentity: boolean): void {
+    const opens = Number(this.storage.get(OPENS_KEY) ?? '0');
+    const rawLastStart = this.storage.get(LAST_START_KEY);
+    const lastStart = rawLastStart === null ? null : Number(rawLastStart);
+
+    this.storage.set(OPENS_KEY, String((Number.isFinite(opens) ? opens : 0) + 1));
+    this.storage.set(LAST_START_KEY, String(this.clock.now()));
+
+    this.events.start({
+      hasExistingIdentity: hadIdentity,
+      opens: Number.isFinite(opens) ? opens : 1,
+      lastStart: lastStart !== null && Number.isFinite(lastStart) ? lastStart : null,
+    });
+    this.lifecycle.start();
+  }
+
+  /** Drains the queue immediately. For integrators facing a hard navigation. */
+  flush(): Promise<void> {
+    return this.events.flush();
+  }
+
+  /** Stops timers and detaches listeners. Used by reset() and by tests. */
+  shutdown(): void {
+    this.events.stop();
+    this.lifecycle.stop();
+  }
+
+  get eventsHandler(): EventsHandler {
+    return this.events;
+  }
+
+  get sessionManager(): SessionManager {
+    return this.session;
+  }
+
+  private readIdentity(): string | null {
+    return this.identity ? this.identity.get() : this.storage.get(LINKSQUARED_STORAGE_KEY);
+  }
+
+  private writeIdentity(value: string): void {
+    if (this.identity) this.identity.set(value);
+    else this.storage.set(LINKSQUARED_STORAGE_KEY, value);
   }
 
   get userIdentifier(): string | null {
@@ -194,13 +307,24 @@ export class GrovsClient {
     this.config.onDeeplink?.(payload);
   }
 
+  /**
+   * Spec B5. The backend's authenticate endpoint permits eleven parameters;
+   * v1 sent three, two of them the literal string "0". The screen, timezone,
+   * WebGL and language fields are a browser fingerprint, and fingerprint
+   * matching is exactly what `data_for_device` → `resolve_by_fingerprint`
+   * uses to resolve a deferred deep link — so sending three fields left web
+   * deferred deep linking matching on almost no signal.
+   *
+   * app_version and build stay "0": a web page has no build number, and the
+   * backend treats them as free-form strings.
+   */
   private deviceDetails(): DeviceDetails {
     return {
       user_agent: getNavigator()?.userAgent ?? '',
-      // Phase 1 replaces these with the real fingerprint set the backend
-      // accepts (spec B5); v1 hardcoded "0" and so does this port.
       app_version: '0',
       build: '0',
+      ...getFingerprint(),
+      session_id: this.session.currentSessionId(),
     };
   }
 

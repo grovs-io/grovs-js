@@ -7,6 +7,17 @@ export interface DeviceDetails {
   user_agent: string;
   app_version: string;
   build: string;
+  /** The browser fingerprint the backend matches deferred deep links against
+   *  (spec B5). Every field is optional: a browser that blocks WebGL should
+   *  degrade the match, not fail the request. */
+  screen_width?: number;
+  screen_height?: number;
+  timezone?: string;
+  webgl_vendor?: string;
+  webgl_renderer?: string;
+  language?: string;
+  /** Threaded into SdkLinkDataService on the link endpoints (spec B10). */
+  session_id?: string;
 }
 
 export interface CreateLinkParams {
@@ -16,9 +27,24 @@ export interface CreateLinkParams {
   data?: Record<string, unknown>;
 }
 
+/**
+ * The batch endpoint answers HTTP 200 with per-event results (spec B6).
+ * A 200 does not mean every event landed.
+ */
+export interface BatchResult {
+  accepted: number;
+  rejected: number;
+  errors: { index: number; error: string }[];
+}
+
 /** Paths mirror Constants.URLs in the iOS APIService. */
 const PATHS = {
   authenticate: '/authenticate',
+  batchEvents: '/events/batch',
+  customEvent: '/event/custom',
+  screenAliases: '/screen_aliases',
+  linkDetails: '/link_details',
+  addPaymentEvent: '/add_payment_event',
   dataForDevice: '/data_for_device',
   dataForDeviceAndPath: '/data_for_device_and_path',
   createLink: '/create_link',
@@ -89,6 +115,37 @@ export class ApiService {
 
   numberOfUnreadMessages(): Promise<TransportResponse> {
     return this.get(PATHS.numberOfUnreadNotifications);
+  }
+
+  /** Caps at 50 server-side; the caller chunks. `keepalive` is set for the
+   *  pagehide flush, where a normal request would be cancelled on unload. */
+  addEvents(events: unknown[], keepalive = false): Promise<TransportResponse> {
+    return this.transport.send({
+      method: 'POST',
+      url: this.config.endpoint + PATHS.batchEvents,
+      headers: this.headers(),
+      body: { events },
+      ...(keepalive ? { keepalive: true } : {}),
+    });
+  }
+
+  addCustomEvent(body: unknown): Promise<TransportResponse> {
+    return this.post(PATHS.customEvent, body);
+  }
+
+  /** Backend caps at 200 per request (spec B8); the caller chunks. */
+  syncScreenAliases(aliases: { identifier: string; alias: string }[]): Promise<TransportResponse> {
+    return this.post(PATHS.screenAliases, { screen_aliases: aliases });
+  }
+
+  linkDetails(path: string): Promise<TransportResponse> {
+    return this.post(PATHS.linkDetails, { path });
+  }
+
+  /** Enterprise deployments only — the route does not exist unless
+   *  GROVS_EE=true, so a 404 here is a configuration answer (spec B4). */
+  addPaymentEvent(body: unknown): Promise<TransportResponse> {
+    return this.post(PATHS.addPaymentEvent, body);
   }
 
   private post(path: string, body: unknown): Promise<TransportResponse> {
