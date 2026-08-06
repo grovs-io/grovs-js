@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Grovs SDK — QA harness</title>
+    <style>
+      :root { color-scheme: light dark; font-family: system-ui, -apple-system, sans-serif; }
+      body { margin: 0; padding: 24px; max-width: 1100px; }
+      h1 { font-size: 18px; margin: 0 0 4px; }
+      p.sub { margin: 0 0 20px; opacity: 0.7; font-size: 13px; }
+      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+      fieldset { border: 1px solid rgba(128,128,128,0.35); border-radius: 8px; margin: 0 0 14px; padding: 12px; }
+      legend { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; opacity: .65; }
+      button { font: inherit; padding: 6px 10px; margin: 3px 3px 3px 0; border-radius: 6px;
+               border: 1px solid rgba(128,128,128,0.4); background: transparent; cursor: pointer; }
+      button:hover { border-color: currentColor; }
+      input { font: inherit; padding: 5px 8px; border-radius: 6px; width: 190px;
+              border: 1px solid rgba(128,128,128,0.4); background: transparent; color: inherit; }
+      #log { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px;
+             white-space: pre-wrap; border: 1px solid rgba(128,128,128,0.35); border-radius: 8px;
+             padding: 12px; height: 70vh; overflow: auto; margin: 0; }
+      .state { font-size: 12px; opacity: 0.75; margin-bottom: 8px; }
+      .state b { opacity: 1; }
+    </style>
+  </head>
+  <body>
+    <h1>Grovs SDK — QA harness</h1>
+    <p class="sub">
+      Every SDK method behind a button, with the outgoing request log beside it.
+      Serves as the Playwright target and as living documentation.
+    </p>
+
+    <div class="grid">
+      <div>
+        <fieldset>
+          <legend>Configure</legend>
+          <input id="apiKey" placeholder="API key" value="demo-key" />
+          <label style="font-size:12px"><input type="checkbox" id="requireConsent" style="width:auto" /> requireConsent</label>
+          <br />
+          <button id="btn-configure">configure()</button>
+          <button id="btn-grantConsent">grantConsent()</button>
+          <button id="btn-reset">reset()</button>
+        </fieldset>
+
+        <fieldset>
+          <legend>Identity</legend>
+          <input id="identifier" placeholder="user identifier" value="user-42" />
+          <button id="btn-setIdentifier">setUserIdentifier()</button>
+          <button id="btn-setAttributes">setUserAttributes()</button>
+          <button id="btn-readIdentity">read accessors</button>
+        </fieldset>
+
+        <fieldset>
+          <legend>Analytics</legend>
+          <button id="btn-track">track()</button>
+          <button id="btn-trackFat">track() 9 KB props</button>
+          <button id="btn-screen">trackScreenView()</button>
+          <button id="btn-tags">setGlobalTags()</button>
+          <button id="btn-aliases">setScreenAliases()</button>
+          <button id="btn-flush">flush()</button>
+        </fieldset>
+
+        <fieldset>
+          <legend>Navigation (SPA route changes)</legend>
+          <button id="btn-nav-home">/ home</button>
+          <button id="btn-nav-checkout">/checkout</button>
+          <button id="btn-nav-product">/product/42</button>
+          <button id="btn-back">history.back()</button>
+        </fieldset>
+
+        <fieldset>
+          <legend>Links</legend>
+          <button id="btn-generateLink">generateLink()</button>
+          <button id="btn-generateLinkFull">generateLink() all params</button>
+          <button id="btn-linkDetails">linkDetails()</button>
+          <button id="btn-payloads">received payloads</button>
+        </fieldset>
+
+        <fieldset>
+          <legend>Messages &amp; commerce</legend>
+          <button id="btn-showMessages">showMessagesList()</button>
+          <button id="btn-unread">numberOfUnreadMessages()</button>
+          <button id="btn-auto">displayAutomaticMessages()</button>
+          <button id="btn-purchase">logCustomPurchase()</button>
+        </fieldset>
+
+        <fieldset>
+          <legend>SDK</legend>
+          <button id="btn-enable">setEnabled(true)</button>
+          <button id="btn-disable">setEnabled(false)</button>
+          <button id="btn-clearLog">clear log</button>
+        </fieldset>
+      </div>
+
+      <div>
+        <div class="state">
+          authenticated: <b id="st-auth">false</b> ·
+          identifier: <b id="st-id">null</b> ·
+          requests: <b id="st-count">0</b>
+        </div>
+        <pre id="log"></pre>
+      </div>
+    </div>
+
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

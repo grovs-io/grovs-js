@@ -5,6 +5,7 @@ import { FetchTransport } from '../net/fetch-transport';
 import type { Transport } from '../net/transport';
 import { DeeplinkResolver } from '../links/deeplink';
 import { resolveStorage, type Storage } from '../storage/storage';
+import { MemoryStorage } from '../storage/memory-storage';
 import { IdentityStore } from '../storage/identity';
 import { PersistedQueue } from '../storage/persisted-queue';
 import { EventsHandler } from '../events/events-handler';
@@ -29,6 +30,17 @@ export const LINKSQUARED_STORAGE_KEY = 'linksquared';
 const OPENS_KEY = 'grovs_opens';
 const LAST_START_KEY = 'grovs_last_start';
 
+/** Everything the SDK writes to the device, for consent migration and reset. */
+const PERSISTED_KEYS = [
+  LINKSQUARED_STORAGE_KEY,
+  OPENS_KEY,
+  LAST_START_KEY,
+  'grovs_session_id',
+  'grovs_session_activity',
+  'grovs_events',
+  'Grovs_path',
+];
+
 export interface ClientDeps {
   transport?: Transport;
   storage?: Storage;
@@ -41,7 +53,7 @@ export class GrovsClient {
   private readonly config: ResolvedConfig;
   private readonly logger = new Logger();
   private readonly context = new Context();
-  private readonly storage: Storage;
+  private storage: Storage;
   private readonly api: ApiService;
   private readonly deeplinks: DeeplinkResolver;
   private readonly identity: IdentityStore | null;
@@ -57,6 +69,12 @@ export class GrovsClient {
   private payments: PaymentEventsHandler | null = null;
 
   private enabled = true;
+  /**
+   * Gated by requireConsent. While false, resolveStorage is bypassed for an
+   * in-memory store and no request leaves — so nothing is written to the
+   * device and nothing reaches the backend.
+   */
+  private consentGranted: boolean;
   private readonly receivedPayloads: Record<string, unknown>[] = [];
   /** True when identity was set before authentication finished, so it still
    *  needs pushing. Mirrors shouldUpdateIdentifiers in v1's manager. */
@@ -69,11 +87,19 @@ export class GrovsClient {
 
     this.clock = deps.clock ?? new SystemClock();
     this.autoStartEvents = deps.autoStartEvents ?? true;
+    this.consentGranted = !this.config.requireConsent;
 
-    this.storage = deps.storage ?? resolveStorage(this.logger, this.config.cookieDomain);
+    // Consent pending means memory only: no cookie, no localStorage, nothing
+    // on the device to clean up if consent is never granted.
+    this.storage = deps.storage
+      ? deps.storage
+      : this.consentGranted
+        ? resolveStorage(this.logger, this.config.cookieDomain)
+        : new MemoryStorage();
     // An injected storage means a test harness; the mirrored identity store
     // reaches for real browser globals, so it is only built for real use.
-    this.identity = deps.storage ? null : new IdentityStore(this.config.cookieDomain);
+    this.identity =
+      deps.storage || !this.consentGranted ? null : new IdentityStore(this.config.cookieDomain);
 
     this.api = new ApiService(
       this.config,
@@ -116,7 +142,54 @@ export class GrovsClient {
     this.context.linksquaredId = this.readIdentity();
   }
 
+  /**
+   * Grants consent: swaps the in-memory store for real persistence, migrates
+   * anything queued meanwhile, and authenticates.
+   *
+   * Events tracked before consent are kept in memory and sent afterwards
+   * rather than discarded — the integrator asked for them, and a banner
+   * answered thirty seconds late should not cost the whole visit.
+   */
+  async grantConsent(): Promise<boolean> {
+    if (this.consentGranted) return this.context.authenticated;
+
+    this.consentGranted = true;
+
+    const durable = resolveStorage(this.logger, this.config.cookieDomain);
+    for (const key of PERSISTED_KEYS) {
+      const value = this.storage.get(key);
+      if (value !== null) durable.set(key, value);
+    }
+    this.storage = durable;
+    this.queue.migrateTo(durable);
+
+    return this.configure();
+  }
+
+  /**
+   * Clears every stored identifier, the session, and the event queue, and
+   * stops tracking. The SDK returns to its pre-consent state.
+   */
+  reset(): void {
+    this.shutdown();
+    this.queue.clear();
+    this.session.reset();
+    for (const key of PERSISTED_KEYS) this.storage.remove(key);
+    this.identity?.clear();
+    this.context.reset();
+    this.consentGranted = !this.config.requireConsent;
+    this.logger.info('SDK state cleared.');
+  }
+
   async configure(): Promise<boolean> {
+    if (!this.consentGranted) {
+      this.logger.info(
+        'configure() is waiting for consent; call grantConsent() to start. ' +
+          'Nothing has been stored or sent.',
+      );
+      return false;
+    }
+
     if (!isBrowser()) {
       // Spec A1: the no-op is loud. A server-side call could never have
       // succeeded — IDENTIFIER comes from window.location and B9 rejects a

@@ -15,6 +15,13 @@ export interface GrovsConfig {
   /** SPA route changes fire screen views automatically. Defaults to true,
    *  matching iOS. */
   autoTrackScreenViews?: boolean;
+  /**
+   * When true, nothing is persisted or transmitted until grantConsent() is
+   * called; events accumulate in memory meanwhile. Defaults to false, which
+   * preserves v1 behaviour — an integrator who upgrades without reading the
+   * changelog must not silently lose data.
+   */
+  requireConsent?: boolean;
   debugLevel?: LogLevel;
   onDeeplink?: DeeplinkCallback;
   onError?: ErrorCallback;
@@ -26,6 +33,7 @@ export interface ResolvedConfig {
   endpoint: string;
   cookieDomain?: string;
   autoTrackScreenViews: boolean;
+  requireConsent: boolean;
   debugLevel: LogLevel;
   onDeeplink: DeeplinkCallback | null;
   onError: ErrorCallback | null;
@@ -46,6 +54,7 @@ export function resolveConfig(input: GrovsConfig): ResolvedConfig {
     testEnvironment: input.testEnvironment ?? false,
     endpoint: `${base}${API_PATH}`,
     autoTrackScreenViews: input.autoTrackScreenViews ?? true,
+    requireConsent: input.requireConsent ?? false,
     debugLevel: input.debugLevel ?? 'error',
     onDeeplink: input.onDeeplink ?? null,
     onError: input.onError ?? null,

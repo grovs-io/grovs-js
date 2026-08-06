@@ -93,9 +93,56 @@ const link = await Grovs.generateLink({
 - **The messages modal no longer paints its backdrop red**, and message titles
   are rendered as text rather than interpolated into HTML.
 
-## What has not changed yet
+## New in v2
 
-`2.0.0-alpha.1` is the foundation release. It does **not** yet emit analytics
-events — neither did v1, whose event queue had no callers, so this is not a
-regression. Installs, opens, sessions, engagement time, and custom events
-arrive in the next release.
+Everything below is additive; none of it requires changing existing code.
+
+```javascript
+// Analytics
+Grovs.track('purchase', { sku: 'x-1', price: 19.99 }, ['checkout']);
+Grovs.trackScreenView('Checkout', { section: 'payment' });
+Grovs.setGlobalTags(['beta']);
+Grovs.setScreenAliases({ '/product/:id': 'Product' });
+
+// Screen tracking is automatic for SPA route changes. To override:
+Grovs.screenNameProvider = (url) =>
+  url.pathname.startsWith('/legal') ? 'suppress' : 'automatic';
+
+// Links
+await Grovs.linkDetails('abc123');
+
+// Commerce (Grovs Enterprise backends only)
+await Grovs.logCustomPurchase({
+  type: 'buy', priceInCents: 1999, currency: 'USD', productID: 'sku-1',
+});
+
+// Consent
+await Grovs.configure({ apiKey, requireConsent: true });
+await Grovs.grantConsent();  // after your banner is accepted
+Grovs.reset();               // clears identifiers, session and queue
+
+await Grovs.flush();         // drain before a hard navigation
+```
+
+### Events now actually fire
+
+v1 shipped an event queue whose `addEvent()` had no callers, so web reported
+zero installs, opens and engagement time. v2 emits the full set:
+`install`/`reinstall`, `app_open`, `time_spent`, `reactivation`, plus your
+custom events.
+
+**Expect a step change in your dashboards on the day you upgrade.** The
+series was flat zero before; it will not be afterwards. That is the defect
+being fixed, but it looks like an anomaly if nobody was told.
+
+### Two limitations worth knowing
+
+- **Safari identity.** The visitor identifier is written to both a cookie and
+  localStorage, because Safari's ITP clamps script-written cookies to 7 days
+  regardless of the expiry requested. That covers visitors who return within
+  the window; ITP can still evict script-writable storage for genuinely
+  dormant ones, so Safari install counts carry a small known over-count.
+- **Purchases need Enterprise.** `logCustomPurchase` calls an endpoint that
+  only exists when the backend runs with `GROVS_EE=true`. On a standard
+  deployment it reports `eventDispatchFailed` naming the requirement rather
+  than retrying.

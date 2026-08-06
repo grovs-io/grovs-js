@@ -153,6 +153,24 @@ export const Grovs = {
     return surface.displayAutomaticMessages();
   },
 
+  /**
+   * Grants consent when configure() was called with requireConsent: true.
+   * Migrates anything tracked meanwhile into durable storage and authenticates.
+   */
+  grantConsent(): Promise<boolean> {
+    if (!client) {
+      notConfigured('grantConsent');
+      return Promise.resolve(false);
+    }
+    return client.grantConsent();
+  },
+
+  /** Clears stored identifiers, the session and the queued events. */
+  reset(): void {
+    if (!client) return notConfigured('reset');
+    client.reset();
+  },
+
   /** Drains the queue now, for integrators facing a hard navigation. */
   flush(): Promise<void> {
     if (!client) {
