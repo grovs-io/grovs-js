@@ -26,6 +26,19 @@ export function isBrowser(): boolean {
 }
 
 /**
+ * Returns the Storage object itself rather than a boolean, so callers never
+ * name the global. Present-but-throwing is a real state (Safari private mode),
+ * so the caller still guards each operation.
+ */
+export function getLocalStorage(): globalThis.Storage | null {
+  try {
+    return typeof localStorage === 'undefined' ? null : localStorage;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Attempts a real write. Private browsing, disabled storage, and quota
  * exhaustion all surface as a throw rather than a falsy object, so probing by
  * capability is the only reliable test — and it retires the isElectron() user
