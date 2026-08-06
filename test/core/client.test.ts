@@ -277,7 +277,8 @@ describe('GrovsClient.setDebugLevel', () => {
     const spy = vi.spyOn(console, 'info').mockImplementation(() => undefined);
     const { client } = make();
     client.setDebugLevel('info');
-    client.setEnabled(true);
+    // setEnabled no-ops when already in that state, so toggle to observe it.
+    client.setEnabled(false);
     expect(spy).toHaveBeenCalled();
     vi.restoreAllMocks();
   });

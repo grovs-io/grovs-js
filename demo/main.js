@@ -6,6 +6,8 @@ const stId = document.getElementById('st-id');
 const stCount = document.getElementById('st-count');
 
 let requestCount = 0;
+/** Mirrors the console's "display automatically" setting, off by default. */
+let autoDisplayEnabled = false;
 
 function log(label, detail) {
   const time = new Date().toISOString().slice(11, 23);
@@ -79,7 +81,6 @@ function stubFor(path) {
     case '/screen_aliases':
       return { status: 200, body: { saved: 2 } };
     case '/notifications_for_device':
-    case '/notifications_to_display_automatically':
       return {
         status: 200,
         body: {
@@ -87,6 +88,19 @@ function stubFor(path) {
             { id: 1, title: 'Welcome', subtitle: 'Thanks for trying Grovs', read: false, access_url: 'about:blank' },
             { id: 2, title: 'Release notes', subtitle: 'v2 is out', read: true, access_url: 'about:blank' },
           ],
+        },
+      };
+    // Automatic display is off in the console by default, and the SDK checks
+    // on every configure(). Answering with messages unconditionally would open
+    // a full-screen modal on every page load — which is what the real setting
+    // does, and why it is opt-in. The button below turns it on.
+    case '/notifications_to_display_automatically':
+      return {
+        status: 200,
+        body: {
+          notifications: autoDisplayEnabled
+            ? [{ id: 3, title: 'Automatic', subtitle: 'Opened without being asked', read: false, access_url: 'about:blank' }]
+            : [],
         },
       };
     case '/number_of_unread_notifications':
@@ -202,8 +216,9 @@ on('btn-showMessages', async () => {
 });
 on('btn-unread', async () => log('numberOfUnreadMessages() →', await Grovs.numberOfUnreadMessages()));
 on('btn-auto', async () => {
+  autoDisplayEnabled = true;
   await Grovs.displayAutomaticMessages();
-  log('displayAutomaticMessages()');
+  log('displayAutomaticMessages() — console setting simulated as on');
 });
 on('btn-purchase', async () =>
   log(

@@ -57,7 +57,7 @@ export function sanitizeProperties(
     return undefined;
   }
 
-  if (encoded.length > ENRICHMENT_LIMITS.maxPropertiesBytes) {
+  if (byteLength(encoded) > ENRICHMENT_LIMITS.maxPropertiesBytes) {
     logger?.warn(
       `Custom event properties exceed ${ENRICHMENT_LIMITS.maxPropertiesBytes} bytes; ` +
         'dropping properties. The event is still recorded.',
@@ -66,6 +66,20 @@ export function sanitizeProperties(
   }
 
   return sanitized;
+}
+
+/**
+ * UTF-8 byte length, not String.length.
+ *
+ * The backend measures `hash.to_json.bytesize`, and String.length counts
+ * UTF-16 code units — so 8,000 CJK characters are 8,000 by one measure and
+ * 24,000 by the other. Measuring the wrong one lets properties past a check
+ * the backend then fails, which is the failure the local check exists to
+ * prevent.
+ */
+function byteLength(value: string): number {
+  if (typeof TextEncoder !== 'undefined') return new TextEncoder().encode(value).length;
+  return unescape(encodeURIComponent(value)).length;
 }
 
 /** Distinguishes "this value must be dropped" from a legitimate null. */
@@ -83,6 +97,9 @@ function jsonSafeValue(value: unknown, seen: WeakSet<object>): unknown {
       // NaN and Infinity serialize to null, which would silently turn a broken
       // measurement into a real-looking one.
       return Number.isFinite(value) ? value : DROP;
+    // Coerced like Date and URL rather than dropped: a bigint is a real
+    // measurement and losing it silently is worse than sending it as a string.
+    // Documented in the README alongside the other coercions.
     case 'bigint':
       return value.toString();
     case 'undefined':

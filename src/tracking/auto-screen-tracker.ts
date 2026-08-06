@@ -149,9 +149,14 @@ export class AutoScreenTracker {
       this.trackCurrent();
     };
 
-    this.frame = win.requestAnimationFrame
-      ? win.requestAnimationFrame(run)
-      : (setTimeout(run, 0) as unknown as number);
+    // requestAnimationFrame does not fire in a hidden tab, so a background
+    // navigation would sit unresolved until the tab is looked at again — and
+    // then collapse to whatever the last URL happened to be.
+    const hidden = getDocument()?.visibilityState === 'hidden';
+    this.frame =
+      !hidden && win.requestAnimationFrame
+        ? win.requestAnimationFrame(run)
+        : (setTimeout(run, 0) as unknown as number);
   }
 
   private trackCurrent(): void {

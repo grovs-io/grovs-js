@@ -5,8 +5,10 @@ export interface LifecycleDeps {
   clock: Clock;
   /** Emits a time_spent event carrying the seconds since the page became visible. */
   onEngagement: (seconds: number) => void;
-  /** The byte-bounded keepalive flush. */
+  /** The byte-bounded keepalive flush. Terminal — pagehide only. */
   onExit: () => void;
+  /** A normal flush, for a tab switch the user may well come back from. */
+  onHide: () => void;
 }
 
 /**
@@ -36,7 +38,10 @@ export class LifecycleTracker {
     const onVisibilityChange = (): void => {
       if (doc.visibilityState === 'hidden') {
         this.emitEngagement();
-        this.deps.onExit();
+        // A tab switch is not an exit. Using the keepalive path here would
+        // fire dozens of times a session, each one a request whose result is
+        // never checked; a normal flush retries on failure.
+        this.deps.onHide();
       } else {
         this.visibleSince = this.deps.clock.now();
       }

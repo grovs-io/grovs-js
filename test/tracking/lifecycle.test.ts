@@ -13,8 +13,9 @@ function make() {
   const clock = new FakeClock();
   const onEngagement = vi.fn();
   const onExit = vi.fn();
-  const tracker = new LifecycleTracker({ clock, onEngagement, onExit });
-  return { clock, onEngagement, onExit, tracker };
+  const onHide = vi.fn();
+  const tracker = new LifecycleTracker({ clock, onEngagement, onExit, onHide });
+  return { clock, onEngagement, onExit, onHide, tracker };
 }
 
 describe('LifecycleTracker', () => {
@@ -34,6 +35,23 @@ describe('LifecycleTracker', () => {
 
     expect(onEngagement).toHaveBeenCalledWith(45);
     expect(onExit).toHaveBeenCalledOnce();
+    tracker.stop();
+  });
+
+  // A tab switch is not an exit: it happens dozens of times a session, and
+  // the keepalive path never checks its result.
+  it('uses the normal flush on a tab switch, not the terminal exit path', () => {
+    setVisibility('visible');
+    const { tracker, clock, onEngagement, onExit, onHide } = make();
+    tracker.start();
+
+    clock.advance(5000);
+    setVisibility('hidden');
+    document.dispatchEvent(new Event('visibilitychange'));
+
+    expect(onHide).toHaveBeenCalledOnce();
+    expect(onExit).not.toHaveBeenCalled();
+    expect(onEngagement).toHaveBeenCalledWith(5);
     tracker.stop();
   });
 

@@ -38,6 +38,8 @@ export const Grovs = {
     links = new LinkGenerator(client);
     messages = new MessagesService(client);
     ui = null;
+    // Automatic display needs the DOM surface, which lives here.
+    client.messagesUI = messagesUI;
     return client.configure();
   },
 
@@ -143,7 +145,10 @@ export const Grovs = {
     return client.logCustomPurchase(purchase);
   },
 
-  /** Opens every message the console flagged for automatic display. */
+  /**
+   * Opens every message the console flagged for automatic display. Runs
+   * automatically after configure(); this is for triggering a re-check.
+   */
   displayAutomaticMessages(): Promise<void> {
     const surface = messagesUI();
     if (!surface) {

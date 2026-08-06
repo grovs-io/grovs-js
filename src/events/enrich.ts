@@ -13,6 +13,13 @@ import { isSystemEvent } from './event';
  * in the first place. No handler constructs a body directly.
  */
 export function enrich(event: QueuedEvent): EventBody {
+  if (!isSystemEvent(event) && !event.eventName) {
+    // Rails reads '' as absent and answers "missing event or event_name",
+    // a permanent rejection. Better to fail here than to send a body the
+    // backend is guaranteed to refuse.
+    throw new Error('Grovs — a custom event requires a non-empty event_name.');
+  }
+
   const base = {
     event_id: event.id,
     session_id: truncate(event.sessionId),

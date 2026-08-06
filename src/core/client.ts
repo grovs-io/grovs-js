@@ -3,18 +3,19 @@ import { GrovsError } from '../net/errors';
 import { ApiService, type DeviceDetails } from '../net/api';
 import { FetchTransport } from '../net/fetch-transport';
 import type { Transport } from '../net/transport';
-import { DeeplinkResolver } from '../links/deeplink';
-import { resolveStorage, type Storage } from '../storage/storage';
+import { DeeplinkResolver, STORED_PATH_KEY } from '../links/deeplink';
+import type { Storage } from '../storage/storage';
 import { MemoryStorage } from '../storage/memory-storage';
-import { IdentityStore } from '../storage/identity';
-import { PersistedQueue } from '../storage/persisted-queue';
+import { resolveBulkStorage, SwitchableStorage } from '../storage/bulk-storage';
+import { IdentityStore, LINKSQUARED_STORAGE_KEY as IDENTITY_KEY } from '../storage/identity';
+import { PersistedQueue, QUEUE_STORAGE_KEY } from '../storage/persisted-queue';
 import { EventsHandler } from '../events/events-handler';
 import { CustomEventsHandler } from '../events/custom-events-handler';
 import { PaymentEventsHandler, type CustomPurchase } from '../events/payment-events-handler';
 import { LifecycleTracker } from '../tracking/lifecycle';
 import { AutoScreenTracker, type ScreenNameProvider } from '../tracking/auto-screen-tracker';
 import { ScreenAliases } from '../tracking/screen-aliases';
-import { SessionManager } from './session';
+import { SessionManager, SESSION_ACTIVITY_KEY, SESSION_ID_KEY } from './session';
 import { SystemClock, type Clock } from './clock';
 import {
   getFingerprint,
@@ -25,21 +26,25 @@ import {
 } from './environment';
 import { resolveConfig, type GrovsConfig, type ResolvedConfig } from './config';
 import { Context } from './context';
+import { SDK_VERSION } from '../version';
 
 export const LINKSQUARED_STORAGE_KEY = 'linksquared';
 const OPENS_KEY = 'grovs_opens';
 const LAST_START_KEY = 'grovs_last_start';
 
-/** Everything the SDK writes to the device, for consent migration and reset. */
-const PERSISTED_KEYS = [
-  LINKSQUARED_STORAGE_KEY,
+/**
+ * Everything the SDK writes to bulk storage, for consent migration and reset.
+ * Imported from the modules that own them: string literals here would let a
+ * rename silently stop reset() clearing a key.
+ */
+const BULK_KEYS = [
   OPENS_KEY,
   LAST_START_KEY,
-  'grovs_session_id',
-  'grovs_session_activity',
-  'grovs_events',
-  'Grovs_path',
-];
+  SESSION_ID_KEY,
+  SESSION_ACTIVITY_KEY,
+  QUEUE_STORAGE_KEY,
+  STORED_PATH_KEY,
+] as const;
 
 export interface ClientDeps {
   transport?: Transport;
@@ -53,10 +58,10 @@ export class GrovsClient {
   private readonly config: ResolvedConfig;
   private readonly logger = new Logger();
   private readonly context = new Context();
-  private storage: Storage;
+  private readonly storage: SwitchableStorage;
+  private identityStore: IdentityStore | null;
   private readonly api: ApiService;
   private readonly deeplinks: DeeplinkResolver;
-  private readonly identity: IdentityStore | null;
   private readonly clock: Clock;
   private readonly session: SessionManager;
   private readonly queue: PersistedQueue;
@@ -67,6 +72,7 @@ export class GrovsClient {
   private readonly screens: AutoScreenTracker;
   private readonly autoStartEvents: boolean;
   private payments: PaymentEventsHandler | null = null;
+  private pipelineStarted = false;
 
   private enabled = true;
   /**
@@ -89,17 +95,27 @@ export class GrovsClient {
     this.autoStartEvents = deps.autoStartEvents ?? true;
     this.consentGranted = !this.config.requireConsent;
 
-    // Consent pending means memory only: no cookie, no localStorage, nothing
-    // on the device to clean up if consent is never granted.
-    this.storage = deps.storage
+    // Bulk storage is localStorage or memory — never a cookie. See
+    // resolveBulkStorage for why that distinction is load-bearing.
+    //
+    // Consent pending means memory only: nothing reaches the device until
+    // grantConsent(), and the switch below repoints every holder at once.
+    const initialBulk = deps.storage
       ? deps.storage
       : this.consentGranted
-        ? resolveStorage(this.logger, this.config.cookieDomain)
+        ? resolveBulkStorage(this.logger)
         : new MemoryStorage();
-    // An injected storage means a test harness; the mirrored identity store
-    // reaches for real browser globals, so it is only built for real use.
-    this.identity =
-      deps.storage || !this.consentGranted ? null : new IdentityStore(this.config.cookieDomain);
+    this.storage = new SwitchableStorage(initialBulk);
+
+    // An injected storage means a test harness. Otherwise the identifier
+    // always gets the cookie + localStorage mirror, including in consent
+    // mode once consent lands — it is the tier most exposed to the Safari
+    // eviction the mirror exists to survive.
+    this.identityStore = deps.storage
+      ? null
+      : this.consentGranted
+        ? new IdentityStore(this.config.cookieDomain)
+        : null;
 
     this.api = new ApiService(
       this.config,
@@ -133,6 +149,7 @@ export class GrovsClient {
       clock: this.clock,
       onEngagement: (seconds) => this.events.log('time_spent', seconds),
       onExit: () => this.events.flushOnExit(),
+      onHide: () => void this.events.flush(),
     });
     this.screens = new AutoScreenTracker({
       aliases: this.aliases,
@@ -155,13 +172,16 @@ export class GrovsClient {
 
     this.consentGranted = true;
 
-    const durable = resolveStorage(this.logger, this.config.cookieDomain);
-    for (const key of PERSISTED_KEYS) {
-      const value = this.storage.get(key);
-      if (value !== null) durable.set(key, value);
-    }
-    this.storage = durable;
-    this.queue.migrateTo(durable);
+    // One switch repoints the queue, session, deeplink resolver and counters
+    // together. Migrating each holder separately is how the session and the
+    // captured path previously got stranded on the memory store forever.
+    this.storage.switchTo(resolveBulkStorage(this.logger), BULK_KEYS);
+    // The queue is authoritative in memory and only writes on a debounce, so
+    // it may hold events the switch did not carry across.
+    this.queue.flushToStorage();
+
+    // Consent mode deferred this; the identifier gets its mirror now.
+    this.identityStore ??= new IdentityStore(this.config.cookieDomain);
 
     return this.configure();
   }
@@ -174,10 +194,21 @@ export class GrovsClient {
     this.shutdown();
     this.queue.clear();
     this.session.reset();
-    for (const key of PERSISTED_KEYS) this.storage.remove(key);
-    this.identity?.clear();
+    for (const key of BULK_KEYS) this.storage.remove(key);
+    this.storage.remove(IDENTITY_KEY);
+    this.identityStore?.clear();
     this.context.reset();
+    this.pipelineStarted = false;
+
     this.consentGranted = !this.config.requireConsent;
+    if (!this.consentGranted) {
+      // Consent revoked means back to memory-only. Leaving the durable store
+      // attached would keep persisting after the user withdrew the permission
+      // that allowed it — the specific guarantee consent mode sells.
+      this.storage.switchTo(new MemoryStorage(), []);
+      this.identityStore = null;
+    }
+
     this.logger.info('SDK state cleared.');
   }
 
@@ -248,8 +279,24 @@ export class GrovsClient {
 
     if (this.identityDirty) void this.pushIdentity();
 
+    // Automatic display is a console setting, so it has to happen without the
+    // integrator calling anything — that is what "automatic" means, and iOS
+    // ships it that way.
+    if (this.autoStartEvents) void this.displayAutomaticMessages();
+
     return true;
   }
+
+  /** Opens every message the console flagged for automatic display. */
+  async displayAutomaticMessages(): Promise<void> {
+    if (!this.enabled) return;
+    const surface = this.messagesUI?.();
+    if (!surface) return;
+    await surface.displayAutomaticMessages();
+  }
+
+  /** Set by the facade, which owns the DOM surface. */
+  messagesUI: (() => { displayAutomaticMessages: () => Promise<void> } | null) | null = null;
 
   /**
    * Emits the launch events and starts the flush timers.
@@ -260,6 +307,13 @@ export class GrovsClient {
    * days ago means reactivation.
    */
   private startEventPipeline(hadIdentity: boolean): void {
+    // React strict mode and hot reload both call configure() twice. Without
+    // this, launch events are emitted twice and the second start() overwrites
+    // the interval handles, leaking two timers that flush forever. The
+    // History patch has the same guard for the same reason (spec A7).
+    if (this.pipelineStarted) return;
+    this.pipelineStarted = true;
+
     const opens = Number(this.storage.get(OPENS_KEY) ?? '0');
     const rawLastStart = this.storage.get(LAST_START_KEY);
     const lastStart = rawLastStart === null ? null : Number(rawLastStart);
@@ -333,11 +387,11 @@ export class GrovsClient {
   }
 
   private readIdentity(): string | null {
-    return this.identity ? this.identity.get() : this.storage.get(LINKSQUARED_STORAGE_KEY);
+    return this.identityStore ? this.identityStore.get() : this.storage.get(LINKSQUARED_STORAGE_KEY);
   }
 
   private writeIdentity(value: string): void {
-    if (this.identity) this.identity.set(value);
+    if (this.identityStore) this.identityStore.set(value);
     else this.storage.set(LINKSQUARED_STORAGE_KEY, value);
   }
 
@@ -363,8 +417,24 @@ export class GrovsClient {
     return this.context.authenticated;
   }
 
+  /**
+   * Disabling stops the SDK, it does not merely mute it: timers are cleared,
+   * lifecycle listeners detached, and the History patch released (spec A7).
+   * A flag alone would leave two intervals and a global patch running in a
+   * page that asked the SDK to stop.
+   */
   setEnabled(enabled: boolean): void {
+    if (this.enabled === enabled) return;
     this.enabled = enabled;
+
+    if (!enabled) {
+      this.shutdown();
+    } else if (this.context.authenticated) {
+      this.lifecycle.start();
+      if (this.config.autoTrackScreenViews) this.screens.start();
+      this.events.resume();
+    }
+
     this.logger.info(`SDK ${enabled ? 'enabled' : 'disabled'}.`);
   }
 
@@ -451,8 +521,11 @@ export class GrovsClient {
   private deviceDetails(): DeviceDetails {
     return {
       user_agent: getNavigator()?.userAgent ?? '',
-      app_version: '0',
-      build: '0',
+      // A web page has no build number, so `build` carries the SDK version and
+      // `app_version` the host app's, defaulting to the same. Both are
+      // free-form strings server-side; the literal "0" v1 sent was useless.
+      app_version: this.config.appVersion,
+      build: SDK_VERSION,
       ...getFingerprint(),
       session_id: this.session.currentSessionId(),
     };

@@ -187,13 +187,35 @@ describe('EventsHandler flushing', () => {
     handler.stop();
   });
 
-  it('chunks at 50 events per request', async () => {
-    const { handler, transport } = harness();
+  it('chunks at 50 events per request and drains the rest', async () => {
+    const { handler, transport, queue } = harness();
     for (let i = 0; i < 120; i += 1) handler.log('view');
     handler.onPathResolved(null);
     await handler.flush();
 
-    expect(batchBodies(transport)).toHaveLength(50);
+    const batches = transport.requestsTo('/events/batch');
+    const sizes = batches.map(
+      (r) => (r.body as { events: unknown[] }).events.length,
+    );
+    // A queue of 300 would otherwise take five minutes to clear at one batch
+    // per 30-second tick.
+    expect(sizes).toEqual([50, 50, 20]);
+    expect(queue.size()).toBe(0);
+    handler.stop();
+  });
+
+  it('stops draining when a batch fails, leaving the remainder queued', async () => {
+    const { handler, transport, queue } = harness();
+    transport
+      .enqueue({ ok: true, status: 200, body: { accepted: 50, rejected: 0, errors: [] } })
+      .enqueueStatus(500, {});
+
+    for (let i = 0; i < 120; i += 1) handler.log('view');
+    handler.onPathResolved(null);
+    await handler.flush();
+
+    expect(transport.requestsTo('/events/batch')).toHaveLength(2);
+    expect(queue.size()).toBe(70);
     handler.stop();
   });
 

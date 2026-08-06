@@ -122,7 +122,14 @@ export class EventsHandler {
 
     this.sending = true;
     try {
-      await this.sendChunks(pending.slice(0, MAX_BATCH_SIZE), false);
+      // Drain rather than send one batch: a queue of 300 would otherwise take
+      // five minutes to clear at one batch per 30-second tick.
+      let remaining = pending;
+      while (remaining.length > 0) {
+        const sent = await this.sendChunks(remaining.slice(0, MAX_BATCH_SIZE), false);
+        if (!sent) break;
+        remaining = this.deps.queue.all();
+      }
     } finally {
       this.sending = false;
     }
@@ -162,8 +169,21 @@ export class EventsHandler {
     }
 
     if (bodies.length > 0) {
-      void this.deps.api.addEvents(bodies, true);
-      this.deps.queue.remove(batch.map((event) => event.id));
+      // Remove only once the request resolves. Deleting up front loses the
+      // batch outright whenever keepalive is refused — over budget, offline,
+      // or a network error — and time_spent is not retryable from a later
+      // page load if it was already dropped here.
+      const ids = batch.map((event) => event.id);
+      void this.deps.api
+        .addEvents(bodies, true)
+        .then((response) => {
+          if (response.ok) this.deps.queue.remove(ids);
+          this.deps.queue.flushToStorage();
+        })
+        .catch(() => {
+          this.deps.queue.flushToStorage();
+        });
+
       if (batch.length < ordered.length) {
         this.deps.logger.info(
           `Exit flush sent ${batch.length} of ${ordered.length} events; ` +
@@ -176,6 +196,12 @@ export class EventsHandler {
     this.deps.queue.flushToStorage();
   }
 
+  /** Restarts the flush interval after a setEnabled(false) / (true) cycle. */
+  resume(): void {
+    if (this.timer !== null) return;
+    this.timer = setInterval(() => void this.flush(), BATCH_INTERVAL_MS);
+  }
+
   stop(): void {
     if (this.timer !== null) clearInterval(this.timer);
     if (this.leewayTimer !== null) clearTimeout(this.leewayTimer);
@@ -183,7 +209,8 @@ export class EventsHandler {
     this.leewayTimer = null;
   }
 
-  private async sendChunks(chunk: QueuedEvent[], keepalive: boolean): Promise<void> {
+  /** Returns whether the batch was accepted, so the caller knows to continue. */
+  private async sendChunks(chunk: QueuedEvent[], keepalive: boolean): Promise<boolean> {
     const bodies = chunk.map((event) => enrich(event));
     const response = await this.deps.api.addEvents(bodies, keepalive);
 
@@ -193,7 +220,7 @@ export class EventsHandler {
         GrovsError.eventDispatchFailed,
         `Event batch failed with status ${response.status}; ${chunk.length} events remain queued.`,
       );
-      return;
+      return false;
     }
 
     // Spec B6: HTTP 200 with per-event errors. Rejections are validation
@@ -218,5 +245,6 @@ export class EventsHandler {
     // is against the batch as sent, before any removal, so the arithmetic
     // cannot drift.
     this.deps.queue.remove(chunk.map((event) => event.id));
+    return true;
   }
 }

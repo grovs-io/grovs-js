@@ -1,4 +1,5 @@
 import type { ErrorCallback, LogLevel } from '../logging/logger';
+import { SDK_VERSION } from '../version';
 
 export type DeeplinkCallback = (payload: Record<string, unknown>) => void;
 
@@ -22,6 +23,9 @@ export interface GrovsConfig {
    * changelog must not silently lose data.
    */
   requireConsent?: boolean;
+  /** Your app's version, reported with the device fingerprint. Defaults to
+   *  the SDK version, since a web page has no build number of its own. */
+  appVersion?: string;
   debugLevel?: LogLevel;
   onDeeplink?: DeeplinkCallback;
   onError?: ErrorCallback;
@@ -34,6 +38,7 @@ export interface ResolvedConfig {
   cookieDomain?: string;
   autoTrackScreenViews: boolean;
   requireConsent: boolean;
+  appVersion: string;
   debugLevel: LogLevel;
   onDeeplink: DeeplinkCallback | null;
   onError: ErrorCallback | null;
@@ -55,6 +60,7 @@ export function resolveConfig(input: GrovsConfig): ResolvedConfig {
     endpoint: `${base}${API_PATH}`,
     autoTrackScreenViews: input.autoTrackScreenViews ?? true,
     requireConsent: input.requireConsent ?? false,
+    appVersion: input.appVersion?.trim() || SDK_VERSION,
     debugLevel: input.debugLevel ?? 'error',
     onDeeplink: input.onDeeplink ?? null,
     onError: input.onError ?? null,

@@ -170,11 +170,12 @@ can be segmented by screen.
 `reactivation`, `user_referred`). Use `trackScreenView()` for screen views.
 
 **Property values** may be strings, numbers, booleans, `null`, or nested
-arrays and objects of those. `Date` and `URL` are coerced to strings. Values
-that cannot be represented in JSON — `NaN`, `Infinity`, functions, circular
-references — are dropped for that key only; the rest are still sent. If the
-encoded properties exceed 8 KB they are all dropped and the event is still
-recorded. Tags are capped at 20 per event, each 255 characters.
+arrays and objects of those. `Date`, `URL` and `BigInt` are coerced to
+strings. Values that cannot be represented in JSON — `NaN`, `Infinity`,
+functions, symbols, circular references — are dropped for that key only; the
+rest are still sent. If the encoded properties exceed 8 KB (measured as UTF-8
+bytes, as the backend measures them) they are all dropped and the event is
+still recorded. Tags are capped at 20 per event, each 255 characters.
 
 ### Screen tracking
 
@@ -267,6 +268,14 @@ await Grovs.grantConsent();
 // Clear identifiers, session and queued events:
 Grovs.reset();
 ```
+
+### Delivery
+
+Events are queued, persisted to `localStorage`, and sent in batches of 50 —
+five seconds after startup, then every 30 seconds, and on tab close. Failed
+requests retry up to three times with exponential backoff and jitter; events
+the backend rejects as permanently invalid are dropped rather than retried.
+The queue holds 1,000 events and discards anything older than seven days.
 
 ## Errors
 

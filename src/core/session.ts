@@ -25,6 +25,9 @@ const IDLE_TIMEOUT_MS = 30 * 60_000;
  * than its mechanism.
  */
 export class SessionManager {
+  /** Mirrors the last write so a read does not hit storage on every event. */
+  private cachedActivity: number | null = null;
+
   constructor(
     private readonly storage: Storage,
     private readonly clock: Clock,
@@ -53,11 +56,13 @@ export class SessionManager {
     if (this.clock.now() - last <= IDLE_TIMEOUT_MS) return false;
 
     this.storage.set(SESSION_ID_KEY, randomUUID());
+    this.cachedActivity = null;
     this.touch();
     return true;
   }
 
   reset(): void {
+    this.cachedActivity = null;
     this.storage.remove(SESSION_ID_KEY);
     this.storage.remove(SESSION_ACTIVITY_KEY);
   }
@@ -67,11 +72,17 @@ export class SessionManager {
    * has to be written deliberately as such: two tabs racing must never move
    * the stamp backwards, or an active tab's write could be clobbered by a
    * slower one carrying an older reading.
+   *
+   * Writes at most once a second. The stamp only has to be accurate to within
+   * the 30-minute idle window, and the queue was debounced precisely to stop
+   * hammering the same synchronous store on every event.
    */
   private touch(): void {
     const now = this.clock.now();
     const last = this.lastActivity();
     if (last !== null && last > now) return;
+    if (this.cachedActivity !== null && now - this.cachedActivity < 1000) return;
+    this.cachedActivity = now;
     this.storage.set(SESSION_ACTIVITY_KEY, String(now));
   }
 
