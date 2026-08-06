@@ -27,8 +27,35 @@ This will add the Grovs SDK to your dependencies in package.json.
 After installation, you can include the SDK in your project:
 
 ```javascript
-import Grovs from "Grovs";
+import Grovs from "grovs";
 ```
+
+### Script tag
+
+The IIFE build at `dist/grovs.global.js` exposes `window.Grovs`. Serve it from
+your own origin alongside your other assets:
+
+```html
+<script src="/assets/grovs.global.js"></script>
+<script>
+  Grovs.configure({ apiKey: "your-api-key" });
+</script>
+```
+
+Loading it from a public CDN works too, but pin an exact version and add a
+Subresource Integrity hash — a `@2` range resolves to a different file on every
+patch release, which defeats SRI and leaves you executing whatever the CDN
+serves. The published release notes carry the `integrity` value for each
+version.
+
+### TypeScript
+
+Types ship with the package; no `@types/grovs` is needed.
+
+### Upgrading from v1
+
+Your existing code keeps working. Two accessors return corrected values — see
+[MIGRATION.md](MIGRATION.md) before upgrading.
 
 ## Documentation
 
