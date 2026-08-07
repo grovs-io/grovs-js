@@ -34,6 +34,12 @@ function messagesUI(): MessagesUI | null {
  */
 export const Grovs = {
   async configure(config: GrovsConfig): Promise<boolean> {
+    // React strict mode and hot reload call this twice. The per-client guard
+    // cannot help here: a second call builds a *new* client, so without this
+    // the previous one's flush interval, lifecycle listeners and History
+    // patch stay live and everything is tracked twice.
+    client?.shutdown();
+
     client = new GrovsClient(config);
     links = new LinkGenerator(client);
     messages = new MessagesService(client);

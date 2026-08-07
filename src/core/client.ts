@@ -180,8 +180,16 @@ export class GrovsClient {
     // it may hold events the switch did not carry across.
     this.queue.flushToStorage();
 
-    // Consent mode deferred this; the identifier gets its mirror now.
-    this.identityStore ??= new IdentityStore(this.config.cookieDomain);
+    // Consent mode deferred this; the identifier gets its mirror now — and
+    // the existing value must be read back before authenticating. The
+    // constructor read from the memory store, which was empty, so without
+    // this a returning visitor authenticates with no LINKSQUARED header, the
+    // backend mints a fresh identifier, and they are counted as a new install
+    // rather than recognised.
+    if (!this.identityStore) {
+      this.identityStore = new IdentityStore(this.config.cookieDomain);
+      this.context.linksquaredId = this.identityStore.get();
+    }
 
     return this.configure();
   }
@@ -457,6 +465,18 @@ export class GrovsClient {
 
   get log(): Logger {
     return this.logger;
+  }
+
+  /**
+   * Reports a call made before the SDK was usable, once per method.
+   *
+   * During server rendering every public method lands here, and a page that
+   * renders repeatedly would otherwise report the same failure on every pass.
+   * Spec A5 fixes the code set at four, so this reuses the closest one rather
+   * than inventing a fifth.
+   */
+  reportUnavailable(method: string, code: GrovsError, message: string): void {
+    this.logger.reportErrorOnce(method, code, message);
   }
 
   get isEnabled(): boolean {

@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import Grovs from '../src/index';
+import { GrovsClient } from '../src/core/client';
 
 describe('public facade', () => {
   it('exposes the v2 surface', () => {
@@ -39,6 +40,22 @@ describe('public facade', () => {
     await expect(Grovs.numberOfUnreadMessages()).resolves.toBe(0);
     await expect(Grovs.markMessageAsRead(1)).resolves.toBe(false);
     await expect(Grovs.showMessagesList()).resolves.toBeUndefined();
+  });
+
+  // The per-client pipeline guard cannot help here: a second configure()
+  // builds a *new* client, so without this the previous one's flush interval,
+  // lifecycle listeners and History patch stay live and everything is tracked
+  // twice. React strict mode and hot reload both hit this path.
+  it('retires the previous client when configure() is called twice', async () => {
+    const shutdown = vi.spyOn(GrovsClient.prototype, 'shutdown');
+
+    await Grovs.configure({ apiKey: 'k' });
+    expect(shutdown).not.toHaveBeenCalled();
+
+    await Grovs.configure({ apiKey: 'k' });
+    expect(shutdown).toHaveBeenCalledTimes(1);
+
+    shutdown.mockRestore();
   });
 
   it('does not throw when identity setters are called before configure', () => {

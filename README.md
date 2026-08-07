@@ -273,7 +273,8 @@ Grovs.reset();
 
 Events are queued, persisted to `localStorage`, and sent in batches of 50 —
 five seconds after startup, then every 30 seconds, and on tab close. Failed
-requests retry up to three times with exponential backoff and jitter; events
+requests are attempted up to three times total, with exponential backoff and
+full jitter between attempts; events
 the backend rejects as permanently invalid are dropped rather than retried.
 The queue holds 1,000 events and discards anything older than seven days.
 

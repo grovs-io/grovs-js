@@ -17,7 +17,8 @@ export class LinkGenerator {
     if (!this.client.isEnabled) return null;
 
     if (!this.client.isAuthenticated()) {
-      this.client.log.reportError(
+      this.client.reportUnavailable(
+        'generateLink',
         GrovsError.linkGenerationFailed,
         'The SDK is not authenticated yet; links cannot be generated. ' +
           'Await configure() before calling generateLink().',
@@ -57,7 +58,8 @@ export class LinkGenerator {
     if (!this.client.isEnabled) return null;
 
     if (!this.client.isAuthenticated()) {
-      this.client.log.reportError(
+      this.client.reportUnavailable(
+        'linkDetails',
         GrovsError.networkRequestFailed,
         'The SDK is not authenticated yet; link details cannot be fetched.',
       );

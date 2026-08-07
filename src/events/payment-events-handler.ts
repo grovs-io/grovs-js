@@ -25,7 +25,8 @@ export class PaymentEventsHandler {
     if (!this.client.isEnabled) return false;
 
     if (!this.client.isAuthenticated()) {
-      this.client.log.reportError(
+      this.client.reportUnavailable(
+        'logCustomPurchase',
         GrovsError.eventDispatchFailed,
         'The SDK is not authenticated yet; purchase events cannot be sent.',
       );
