@@ -22,6 +22,9 @@
              padding: 12px; height: 70vh; overflow: auto; margin: 0; }
       .state { font-size: 12px; opacity: 0.75; margin-bottom: 8px; }
       .state b { opacity: 1; }
+      label.row { display: flex; align-items: center; gap: 6px; font-size: 12px; margin: 4px 0; }
+      p.hint { font-size: 11.5px; opacity: 0.75; margin: 8px 0 0; line-height: 1.45; }
+      p.hint code { background: rgba(128,128,128,0.18); padding: 1px 4px; border-radius: 3px; }
     </style>
   </head>
   <body>
@@ -34,9 +37,26 @@
     <div class="grid">
       <div>
         <fieldset>
+          <legend>Backend</legend>
+          <label class="row">
+            <input type="checkbox" id="liveMode" style="width:auto" />
+            <span>Talk to a real backend (unchecked = local stubs)</span>
+          </label>
+          <input id="baseURL" placeholder="https://sdk.sqd.link (blank = default)" />
+          <label class="row">
+            <input type="checkbox" id="testEnvironment" style="width:auto" checked />
+            <span>testEnvironment</span>
+          </label>
+          <p class="hint" id="liveHint"></p>
+        </fieldset>
+
+        <fieldset>
           <legend>Configure</legend>
           <input id="apiKey" placeholder="API key" value="demo-key" />
-          <label style="font-size:12px"><input type="checkbox" id="requireConsent" style="width:auto" /> requireConsent</label>
+          <label class="row">
+            <input type="checkbox" id="requireConsent" style="width:auto" />
+            <span>requireConsent</span>
+          </label>
           <br />
           <button id="btn-configure">configure()</button>
           <button id="btn-grantConsent">grantConsent()</button>

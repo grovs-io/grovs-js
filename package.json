@@ -25,10 +25,12 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "npm run typecheck && npm run lint && vitest run --coverage",
-    "verify": "npm run test && npm run build && node scripts/check-size.mjs && node scripts/check-exports.mjs && playwright test",
+    "verify": "npm run test && npm run build && node scripts/check-size.mjs && node scripts/check-exports.mjs && playwright test --project=chromium",
     "dev": "tsup --watch",
     "demo": "vite --port 5174 --strictPort",
-    "test:e2e": "npm run build && playwright test"
+    "test:e2e": "npm run build && playwright test --project=chromium",
+    "test:live": "playwright test --project=live",
+    "test:live:watch": "node scripts/live-watch.mjs"
   },
   "keywords": [
     "grovs",

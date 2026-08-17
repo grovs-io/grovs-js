@@ -331,10 +331,17 @@ Grovs.setDebugLevel("info");
 ## Development
 
 ```bash
-npm test        # typecheck, lint, unit tests, coverage gate
-npm run verify  # the above plus build, bundle-size budget and E2E
-npm run demo    # QA harness at http://localhost:5174/demo/
+npm test              # typecheck, lint, unit tests, coverage gate
+npm run verify        # the above plus build, size budget, export shapes, E2E
+npm run demo          # QA harness at http://localhost:5174/demo/
+npm run test:live     # every flow against a real backend (needs a key)
 ```
+
+The demo runs stubbed by default — no backend needed — and can be switched to
+a real one. `npm run test:live` drives it through every flow against a live
+project: create a link, arrive through it, resolve the payload, deliver events
+and confirm the backend accepted them, messages, identity, purchases. See
+[demo/README.md](demo/README.md).
 
 ## Further assistance
 

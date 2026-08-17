@@ -9,6 +9,27 @@ let requestCount = 0;
 /** Mirrors the console's "display automatically" setting, off by default. */
 let autoDisplayEnabled = false;
 
+const SETTINGS_KEY = 'grovs_demo_settings';
+
+/**
+ * Demo settings, kept out of the SDK's own storage keys and persisted so a
+ * reload keeps them — which matters, because deferred deep link attribution
+ * is only observable across a reload.
+ */
+function loadSettings() {
+  try {
+    return { live: false, baseURL: '', apiKey: 'demo-key', ...JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}') };
+  } catch {
+    return { live: false, baseURL: '', apiKey: 'demo-key' };
+  }
+}
+
+function saveSettings(next) {
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...loadSettings(), ...next }));
+}
+
+const settings = loadSettings();
+
 function log(label, detail) {
   const time = new Date().toISOString().slice(11, 23);
   const body = detail === undefined ? '' : ` ${JSON.stringify(detail)}`;
@@ -25,9 +46,14 @@ function refreshState() {
 /**
  * Wraps fetch so the panel shows what actually went over the wire.
  *
- * The demo has no real backend, so every call is answered locally: the point
- * is to exercise the SDK's request construction and see it, not to reach a
- * server. Playwright asserts against this same log.
+ * Two modes. Stubbed (the default) answers every call locally: no backend
+ * needed, and the point is to exercise request *construction* and see it.
+ * Live passes the request through to a real backend and logs the response —
+ * which is the only way to catch an integration problem a stub cannot have,
+ * like a linked domain that does not match or a CORS rule that is missing.
+ *
+ * Both modes record to window.__grovsRequests, so the Playwright suites read
+ * the same log either way.
  */
 const realFetch = window.fetch.bind(window);
 window.fetch = async (url, init = {}) => {
@@ -43,11 +69,26 @@ window.fetch = async (url, init = {}) => {
 
   log(`→ ${init.method ?? 'GET'} ${path}`, parsed);
   window.__grovsRequests = window.__grovsRequests ?? [];
-  window.__grovsRequests.push({ path, method: init.method, body: parsed, keepalive: !!init.keepalive });
+  const record = { path, method: init.method, body: parsed, keepalive: !!init.keepalive };
+  window.__grovsRequests.push(record);
   refreshState();
 
+  if (settings.live) {
+    const response = await realFetch(url, init);
+    const text = await response.clone().text();
+    record.status = response.status;
+    try {
+      record.response = text ? JSON.parse(text) : null;
+    } catch {
+      record.response = text;
+    }
+    log(`← ${response.status} ${path}`, record.response);
+    return response;
+  }
+
   const canned = stubFor(path);
-  if (canned === null) return realFetch(url, init);
+  record.status = canned.status;
+  record.response = canned.body;
   return new Response(JSON.stringify(canned.body), {
     status: canned.status,
     headers: { 'Content-Type': 'application/json' },
@@ -119,14 +160,19 @@ function stubFor(path) {
 const on = (id, fn) => document.getElementById(id).addEventListener('click', fn);
 
 on('btn-configure', async () => {
-  const ok = await Grovs.configure({
+  const baseURL = document.getElementById('baseURL').value.trim();
+  const config = {
     apiKey: document.getElementById('apiKey').value,
-    testEnvironment: true,
+    testEnvironment: document.getElementById('testEnvironment').checked,
     debugLevel: 'info',
     requireConsent: document.getElementById('requireConsent').checked,
     onDeeplink: (payload) => log('⚑ onDeeplink', payload),
     onError: (code, message) => log(`✖ onError(${code})`, message),
-  });
+  };
+  if (baseURL) config.baseURL = baseURL;
+
+  saveSettings({ apiKey: config.apiKey, baseURL });
+  const ok = await Grovs.configure(config);
   log('configure() →', ok);
   refreshState();
 });
@@ -247,5 +293,39 @@ on('btn-clearLog', () => {
   refreshState();
 });
 
-log('Ready. Press configure() to start.');
+// --- Backend mode wiring ---
+
+const liveModeEl = document.getElementById('liveMode');
+const baseURLEl = document.getElementById('baseURL');
+const apiKeyEl = document.getElementById('apiKey');
+const hintEl = document.getElementById('liveHint');
+
+liveModeEl.checked = settings.live;
+baseURLEl.value = settings.baseURL;
+apiKeyEl.value = settings.apiKey;
+
+function refreshHint() {
+  hintEl.innerHTML = liveModeEl.checked
+    ? 'Live. Requests reach the backend, and responses are logged. Two things must be true or ' +
+      'authenticate answers 422: the project needs <code>' +
+      window.location.origin +
+      '</code> in its linked domains, and the backend must allow this origin via CORS.'
+    : 'Stubbed. No backend needed — every call is answered locally so you can inspect what the ' +
+      'SDK builds. Tick the box to send it for real.';
+}
+
+liveModeEl.addEventListener('change', () => {
+  saveSettings({ live: liveModeEl.checked });
+  refreshHint();
+  log(
+    liveModeEl.checked
+      ? 'Live mode on — reload, then configure() to authenticate for real.'
+      : 'Stub mode on — reload to clear any live state.',
+  );
+});
+baseURLEl.addEventListener('change', () => saveSettings({ baseURL: baseURLEl.value.trim() }));
+apiKeyEl.addEventListener('change', () => saveSettings({ apiKey: apiKeyEl.value }));
+
+refreshHint();
+log(`Ready (${settings.live ? 'live' : 'stubbed'}). Press configure() to start.`);
 refreshState();
