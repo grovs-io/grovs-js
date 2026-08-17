@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { GrovsClient } from '../../src/core/client';
+import { GrovsClient, __resetPendingConsentStore } from '../../src/core/client';
 import { MessagesService } from '../../src/messages/messages';
 import { PersistedQueue } from '../../src/storage/persisted-queue';
 import { FakeTransport } from '../helpers/fake-transport';
@@ -402,6 +402,141 @@ describe('consent merge survives the persist debounce', () => {
     expect(sent.map((e) => e['event_id'])).toContain('from-previous-visit');
     expect(sent.map((e) => e['event_name'])).toContain('this-visit');
     client.shutdown();
+  });
+});
+
+describe('lifecycle changes invalidate work in flight', () => {
+  beforeEach(clearBrowserStorage);
+
+  // A pending authenticate landing after the clear re-authenticated the very
+  // client that had just been wiped.
+  it('does not let a pending configure survive reset()', async () => {
+    const transport = new FakeTransport();
+    transport.enqueue(AUTH_OK);
+    const client = new GrovsClient(
+      { apiKey: 'k' },
+      { transport, storage: new FakeStorage(), autoStartEvents: false },
+    );
+
+    const pending = client.configure();
+    client.reset();
+
+    await expect(pending).resolves.toBe(false);
+    expect(client.isAuthenticated()).toBe(false);
+  });
+
+  // Event logging was suppressed, but the intervals, lifecycle listeners and
+  // History patch all started on a client that had been told to stop.
+  it('does not start tracking when disabled mid-authentication', async () => {
+    const transport = new FakeTransport();
+    transport.enqueue(AUTH_OK);
+    const client = new GrovsClient({ apiKey: 'k' }, { transport, storage: new FakeStorage() });
+
+    const pending = client.configure();
+    client.setEnabled(false);
+
+    await expect(pending).resolves.toBe(false);
+    client.shutdown();
+  });
+
+  // Freezing the queue stopped a late write; it did not stop the loop issuing
+  // the batches behind the one already in flight.
+  it('stops draining further batches once retired', async () => {
+    const transport = new FakeTransport();
+    transport.enqueue(AUTH_OK);
+    const client = new GrovsClient(
+      { apiKey: 'k' },
+      { transport, storage: new FakeStorage(), autoStartEvents: false },
+    );
+    await client.configure();
+    client.eventsHandler.onPathResolved(null);
+
+    for (let i = 0; i < 120; i += 1) client.track(`e-${i}`);
+
+    const draining = client.flush();
+    client.dispose();
+    await draining;
+
+    // The first batch was already in flight; the rest must not follow.
+    expect(transport.requestsTo('/events/batch').length).toBeLessThanOrEqual(1);
+  });
+
+  it('clears the in-memory campaign path on reset', async () => {
+    const storage = new FakeStorage();
+    storage.set('Grovs_path', 'campaign-a');
+    const transport = new FakeTransport();
+    transport.enqueue(AUTH_OK);
+    const client = new GrovsClient({ apiKey: 'k' }, { transport, storage, autoStartEvents: false });
+    await client.configure();
+
+    client.reset();
+    transport.enqueue(AUTH_OK);
+    await client.configure();
+
+    client.track('after-reset');
+    client.eventsHandler.onPathResolved(null);
+    await client.flush();
+
+    const sent = transport
+      .requestsTo('/events/batch')
+      .flatMap((r) => (r.body as { events: Record<string, unknown>[] }).events);
+    const after = sent.find((e) => e['event_name'] === 'after-reset');
+    expect(after?.['path']).toBeUndefined();
+    client.shutdown();
+  });
+
+  it('stops message traffic for a retired client', async () => {
+    const transport = new FakeTransport();
+    transport.enqueue(AUTH_OK);
+    const client = new GrovsClient(
+      { apiKey: 'k' },
+      { transport, storage: new FakeStorage(), autoStartEvents: false },
+    );
+    await client.configure();
+    client.dispose();
+    transport.requests.length = 0;
+
+    await new MessagesService(client).getMessages(1);
+    expect(transport.requests).toHaveLength(0);
+  });
+});
+
+describe('consent keeps what was tracked across a reconfigure', () => {
+  beforeEach(() => {
+    clearBrowserStorage();
+    __resetPendingConsentStore();
+  });
+
+  /**
+   * Consent mode promises that events tracked meanwhile are kept. A per-client
+   * memory store broke that on reconfigure: the retired client persisted into
+   * an object the replacement never saw.
+   */
+  it('carries pre-consent events to a replacement client', async () => {
+    const first = new GrovsClient(
+      { apiKey: 'k', requireConsent: true },
+      { transport: new FakeTransport(), autoStartEvents: false },
+    );
+    await first.configure();
+    first.track('tracked-before-reconfigure');
+    first.dispose();
+
+    const transport = new FakeTransport();
+    transport.enqueue(AUTH_OK);
+    const second = new GrovsClient(
+      { apiKey: 'k', requireConsent: true },
+      { transport, autoStartEvents: false },
+    );
+    await second.grantConsent();
+
+    second.eventsHandler.onPathResolved(null);
+    await second.flush();
+
+    const sent = transport
+      .requestsTo('/events/batch')
+      .flatMap((r) => (r.body as { events: Record<string, unknown>[] }).events);
+    expect(sent.map((e) => e['event_name'])).toContain('tracked-before-reconfigure');
+    second.shutdown();
   });
 });
 

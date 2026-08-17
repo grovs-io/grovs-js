@@ -38,6 +38,10 @@ export const Grovs = {
     // cannot help here: a second call builds a *new* client, so without this
     // the previous one's flush interval, lifecycle listeners and History
     // patch stay live and everything is tracked twice.
+    // Close before disposing: the old modals keep the list id, which would
+    // stop the replacement's UI opening at all, and their rows still call
+    // into a client that is about to be retired.
+    ui?.close();
     client?.dispose();
 
     client = new GrovsClient(config);

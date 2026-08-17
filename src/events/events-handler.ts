@@ -36,6 +36,9 @@ export interface EventsHandlerDeps {
   /** The deep link path to stamp on events, once resolved. */
   currentPath: () => string | null;
   isEnabled: () => boolean;
+  /** False once the owning client is retired. Freezing the queue stops a late
+   *  write; this stops the loop issuing further requests after retirement. */
+  isActive?: () => boolean;
 }
 
 /**
@@ -114,8 +117,12 @@ export class EventsHandler {
     this.pathResolved = true;
   }
 
+  private active(): boolean {
+    return this.deps.isEnabled() && (this.deps.isActive?.() ?? true);
+  }
+
   async flush(): Promise<void> {
-    if (!this.pathResolved || this.sending || !this.deps.isEnabled()) return;
+    if (!this.pathResolved || this.sending || !this.active()) return;
 
     const pending = this.deps.queue.pruneStale();
     if (pending.length === 0) return;
@@ -128,6 +135,10 @@ export class EventsHandler {
       while (remaining.length > 0) {
         const sent = await this.sendChunks(remaining.slice(0, MAX_BATCH_SIZE), false);
         if (!sent) break;
+        // Re-check after the await: a client retired or disabled mid-drain
+        // would otherwise keep transmitting the batches behind the one in
+        // flight, and report their failures against a config that is gone.
+        if (!this.active()) break;
         remaining = this.deps.queue.all();
       }
     } finally {
@@ -227,6 +238,8 @@ export class EventsHandler {
     const response = await this.deps.api.addEvents(bodies, keepalive);
 
     if (!response.ok) {
+      // A retired client's failure is not the active one's failure.
+      if (!this.active()) return false;
       // Transport failure: everything stays queued and retries next tick.
       this.deps.logger.reportError(
         GrovsError.eventDispatchFailed,

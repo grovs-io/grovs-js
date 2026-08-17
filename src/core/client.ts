@@ -56,6 +56,23 @@ const BULK_KEYS = [
  */
 const SWITCH_KEYS = BULK_KEYS.filter((key) => key !== QUEUE_STORAGE_KEY);
 
+/**
+ * The store used while consent is pending, shared across clients.
+ *
+ * Consent mode promises that events tracked meanwhile are kept, not
+ * discarded. A per-client store broke that on reconfigure: the old client
+ * persisted into an object the replacement never saw, so anything tracked
+ * before the second configure() vanished. Nothing here touches the device —
+ * it is memory either way — so sharing it costs nothing and keeps the
+ * promise. Granting consent migrates it to localStorage as before.
+ */
+let pendingConsentStore: MemoryStorage | null = null;
+
+/** Test seam: the pending-consent store outlives individual clients. */
+export function __resetPendingConsentStore(): void {
+  pendingConsentStore = null;
+}
+
 export interface ClientDeps {
   transport?: Transport;
   storage?: Storage;
@@ -129,7 +146,7 @@ export class GrovsClient {
       ? deps.storage
       : this.consentGranted
         ? resolveBulkStorage(this.logger)
-        : new MemoryStorage();
+        : (pendingConsentStore ??= new MemoryStorage());
     this.storage = new SwitchableStorage(initialBulk);
 
     // An injected storage means a test harness. Otherwise the identifier
@@ -162,6 +179,7 @@ export class GrovsClient {
       logger: this.logger,
       currentPath: () => this.sessionPath,
       isEnabled: () => this.enabled,
+      isActive: () => this.isActive(),
     });
     this.custom = new CustomEventsHandler({
       events: this.events,
@@ -225,6 +243,9 @@ export class GrovsClient {
    * stops tracking. The SDK returns to its pre-consent state.
    */
   reset(): void {
+    // Bump first: a pending authenticate or payload lookup must not land
+    // after the clear and re-authenticate the client it just wiped.
+    this.configureGeneration += 1;
     this.shutdown();
     this.queue.clear();
     this.session.reset();
@@ -235,6 +256,9 @@ export class GrovsClient {
     this.pipelineStarted = false;
     this.identityDirty = false;
     this.receivedPayloads.length = 0;
+    // Durable Grovs_path is cleared above; the in-memory copy has to go too,
+    // or events after the reset inherit the previous campaign.
+    this.sessionPath = null;
 
     this.consentGranted = !this.config.requireConsent;
     if (!this.consentGranted) {
@@ -444,13 +468,12 @@ export class GrovsClient {
     return this.events.flush();
   }
 
-  /** Stops timers and detaches listeners. Used by reset() and by tests. */
   /**
    * Stops timers and listeners. Reversible — reset() and setEnabled(false)
    * both use it, and the client can configure again afterwards.
    */
   shutdown(): void {
-    // Persist and cancel the pending debounce. Without this a retired client
+    // Persist and cancel the pending debounce. Without this a stopped client
     // still writes its queue a second later, over whatever replaced it.
     this.queue.flushToStorage();
     this.events.stop();
@@ -526,6 +549,10 @@ export class GrovsClient {
     this.enabled = enabled;
 
     if (!enabled) {
+      // As with reset: an authenticate still in flight would otherwise
+      // complete and start the intervals, lifecycle listeners and History
+      // patch on a client that has been told to stop.
+      this.configureGeneration += 1;
       this.shutdown();
     } else if (this.context.authenticated) {
       this.lifecycle.start();
@@ -555,6 +582,19 @@ export class GrovsClient {
 
   get log(): Logger {
     return this.logger;
+  }
+
+  /**
+   * Whether this client is still the one that should be acting.
+   *
+   * dispose() retires it permanently; reset() and setEnabled(false) invalidate
+   * whatever was in flight without retiring it. Every await that can be
+   * followed by a side effect checks this — otherwise a continuation from
+   * before the change lands after it, which is how a reset client
+   * re-authenticated itself and a disabled one restarted its timers.
+   */
+  isActive(): boolean {
+    return !this.disposed;
   }
 
   /**

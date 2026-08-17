@@ -234,6 +234,11 @@ export class MessagesUI {
     this.isLoading = false;
     if (messages.length === 0) this.exhausted = true;
 
+    // The modal may have been closed, or the SDK disabled or reset, while the
+    // request was in flight. Rendering into a detached list is harmless but
+    // rendering into a live one after a stop is not.
+    if (this.listElement !== list) return;
+
     if (this.page === 1) list.replaceChildren();
 
     if (messages.length === 0 && this.page === 1) {

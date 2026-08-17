@@ -121,6 +121,36 @@ describe('SessionManager', () => {
     expect(Number(storage.get(SESSION_ACTIVITY_KEY))).toBe(later);
   });
 
+  /**
+   * A stamp further ahead than the idle window cannot be another tab racing
+   * by milliseconds — it is a clock running fast. Left alone every tab
+   * computes a negative idle and nothing rotates until real time overtakes
+   * it: sessions under-counted and durations inflated for the whole skew.
+   */
+  it('rotates despite a stamp written by a fast clock', () => {
+    const { session, storage, clock } = make();
+    const first = session.currentSessionId();
+
+    storage.set(SESSION_ACTIVITY_KEY, String(clock.now() + 2 * 60 * 60_000));
+
+    // The next read takes the corrupt stamp back...
+    session.currentSessionId();
+    // ...so an ordinary idle gap rotates as it should.
+    clock.advanceMinutes(45);
+    expect(session.currentSessionId()).not.toBe(first);
+  });
+
+  it('still ignores a stamp only milliseconds ahead, which is a real race', () => {
+    const { session, storage, clock } = make();
+    session.currentSessionId();
+
+    const ahead = clock.now() + 50;
+    storage.set(SESSION_ACTIVITY_KEY, String(ahead));
+    session.currentSessionId();
+
+    expect(Number(storage.get(SESSION_ACTIVITY_KEY))).toBe(ahead);
+  });
+
   it('treats corrupt stored activity as no activity and keeps working', () => {
     const { session, storage } = make();
     const first = session.currentSessionId();

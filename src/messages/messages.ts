@@ -19,7 +19,7 @@ export class MessagesService {
    * grantConsent() — a promise the messages endpoints were quietly breaking.
    */
   private get usable(): boolean {
-    return this.client.isEnabled && this.client.isAuthenticated();
+    return this.client.isActive() && this.client.isEnabled && this.client.isAuthenticated();
   }
 
   /** Distinguishes "no messages" from "request failed", which the array

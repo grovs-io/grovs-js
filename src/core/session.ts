@@ -80,6 +80,18 @@ export class SessionManager {
   private touch(): void {
     const now = this.clock.now();
     const last = this.lastActivity();
+
+    // A stamp further ahead than the idle window itself cannot be another
+    // tab racing by milliseconds — it is a clock running fast. Left alone it
+    // makes every tab compute a negative idle, so nothing rotates until real
+    // time overtakes it: sessions under-counted and durations inflated for
+    // the length of the skew. Treat it as corrupt and take the stamp back.
+    if (last !== null && last > now + IDLE_TIMEOUT_MS) {
+      this.cachedActivity = now;
+      this.storage.set(SESSION_ACTIVITY_KEY, String(now));
+      return;
+    }
+
     if (last !== null && last > now) return;
     if (this.cachedActivity !== null && now - this.cachedActivity < 1000) return;
     this.cachedActivity = now;
