@@ -81,19 +81,39 @@ export class PersistedQueue {
   pruneStale(): QueuedEvent[] {
     const cutoff = this.clock.now() - MAX_AGE_MS;
     const fresh = this.events.filter((event) => event.createdAt > cutoff);
+    // Callers iterate this; hand out a copy like all() does.
     const dropped = this.events.length - fresh.length;
     if (dropped > 0) {
       this.events = fresh;
       this.onDropped?.(dropped, `older than ${MAX_AGE_MS / (24 * 60 * 60_000)} days`);
       this.schedulePersist();
     }
-    return this.events;
+    return [...this.events];
   }
 
   /** Applies a mutation to every event, e.g. back-filling a resolved path. */
   transform(fn: (event: QueuedEvent) => QueuedEvent): void {
     this.events = this.events.map(fn);
     this.schedulePersist();
+  }
+
+  /**
+   * Folds anything already in the backing store into the in-memory queue,
+   * then persists the union.
+   *
+   * Used when consent repoints storage: the queue was constructed over empty
+   * memory, so it knows nothing about events a previous visit left behind,
+   * and an unconditional write would erase them.
+   */
+  mergeFromStorage(): void {
+    const known = new Set(this.events.map((event) => event.id));
+    const restored = this.load().filter((event) => !known.has(event.id));
+    if (restored.length > 0) {
+      // Oldest first, so the cap evicts by age as it does everywhere else.
+      this.events = [...restored, ...this.events].slice(-MAX_EVENTS);
+    }
+    this.dirty = true;
+    this.flushToStorage();
   }
 
   /** Forces a synchronous write. Called on pagehide, where a timer will not fire. */
@@ -147,7 +167,14 @@ export class PersistedQueue {
           typeof event === 'object' &&
           event !== null &&
           typeof (event as QueuedEvent).id === 'string' &&
-          typeof (event as QueuedEvent).createdAt === 'number',
+          typeof (event as QueuedEvent).createdAt === 'number' &&
+          // Without this, a record carrying neither name reaches enrich(),
+          // which throws — inside a `void flush()`, so it surfaces as an
+          // unhandled rejection and every valid event behind it is blocked
+          // on this flush and every future one. The guard existed; it was
+          // checking the wrong fields.
+          (typeof (event as QueuedEvent).event === 'string' ||
+            typeof (event as QueuedEvent).eventName === 'string'),
       );
     } catch {
       return [];

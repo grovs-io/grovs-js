@@ -28,7 +28,7 @@ import { resolveConfig, type GrovsConfig, type ResolvedConfig } from './config';
 import { Context } from './context';
 import { SDK_VERSION } from '../version';
 
-export const LINKSQUARED_STORAGE_KEY = 'linksquared';
+export { IDENTITY_KEY as LINKSQUARED_STORAGE_KEY };
 const OPENS_KEY = 'grovs_opens';
 const LAST_START_KEY = 'grovs_last_start';
 
@@ -73,6 +73,8 @@ export class GrovsClient {
   private readonly autoStartEvents: boolean;
   private payments: PaymentEventsHandler | null = null;
   private pipelineStarted = false;
+  private configureGeneration = 0;
+  private readonly storageInjected: boolean;
 
   private enabled = true;
   /**
@@ -94,6 +96,7 @@ export class GrovsClient {
     this.clock = deps.clock ?? new SystemClock();
     this.autoStartEvents = deps.autoStartEvents ?? true;
     this.consentGranted = !this.config.requireConsent;
+    this.storageInjected = deps.storage !== undefined;
 
     // Bulk storage is localStorage or memory — never a cookie. See
     // resolveBulkStorage for why that distinction is load-bearing.
@@ -176,9 +179,10 @@ export class GrovsClient {
     // together. Migrating each holder separately is how the session and the
     // captured path previously got stranded on the memory store forever.
     this.storage.switchTo(resolveBulkStorage(this.logger), BULK_KEYS);
-    // The queue is authoritative in memory and only writes on a debounce, so
-    // it may hold events the switch did not carry across.
-    this.queue.flushToStorage();
+    // Merge before persisting. The queue was built over empty memory, so its
+    // in-memory array knows nothing about events a previous visit left in
+    // localStorage — and an unconditional write would erase them.
+    this.queue.mergeFromStorage();
 
     // Consent mode deferred this; the identifier gets its mirror now — and
     // the existing value must be read back before authenticating. The
@@ -186,7 +190,7 @@ export class GrovsClient {
     // this a returning visitor authenticates with no LINKSQUARED header, the
     // backend mints a fresh identifier, and they are counted as a new install
     // rather than recognised.
-    if (!this.identityStore) {
+    if (!this.identityStore && !this.storageInjected) {
       this.identityStore = new IdentityStore(this.config.cookieDomain);
       this.context.linksquaredId = this.identityStore.get();
     }
@@ -207,6 +211,8 @@ export class GrovsClient {
     this.identityStore?.clear();
     this.context.reset();
     this.pipelineStarted = false;
+    this.identityDirty = false;
+    this.receivedPayloads.length = 0;
 
     this.consentGranted = !this.config.requireConsent;
     if (!this.consentGranted) {
@@ -221,6 +227,12 @@ export class GrovsClient {
   }
 
   async configure(): Promise<boolean> {
+    // A second configure() supersedes this one. Without the check below, a
+    // slow first call can complete afterwards and restart its timers,
+    // lifecycle listeners and screen tracker — two clients, everything twice.
+    const generation = ++this.configureGeneration;
+    const superseded = (): boolean => generation !== this.configureGeneration;
+
     if (!this.consentGranted) {
       this.logger.info(
         'configure() is waiting for consent; call grantConsent() to start. ' +
@@ -251,6 +263,8 @@ export class GrovsClient {
       return false;
     }
 
+    if (superseded()) return false;
+
     const body = (response.body ?? {}) as Record<string, unknown>;
     const linksquaredId = typeof body['linksquared'] === 'string' ? body['linksquared'] : null;
 
@@ -278,12 +292,17 @@ export class GrovsClient {
     this.context.authenticated = true;
     this.logger.info('Authenticated.');
 
+    if (superseded()) return false;
     if (this.autoStartEvents) this.startEventPipeline(hadIdentity);
 
     await this.fetchPayload();
 
     // Only now is the attribution path known, so only now may events leave.
-    this.events.onPathResolved(this.deeplinks.getStoredPath());
+    // Consume it: T2 split read from consume so the path could be retired
+    // once used. Leaving it stored means a visitor who arrived via campaign A
+    // keeps receiving A's payload, and keeps having later direct visits
+    // attributed to A, indefinitely.
+    this.events.onPathResolved(this.deeplinks.consumeStoredPath());
 
     if (this.identityDirty) void this.pushIdentity();
 
@@ -395,12 +414,12 @@ export class GrovsClient {
   }
 
   private readIdentity(): string | null {
-    return this.identityStore ? this.identityStore.get() : this.storage.get(LINKSQUARED_STORAGE_KEY);
+    return this.identityStore ? this.identityStore.get() : this.storage.get(IDENTITY_KEY);
   }
 
   private writeIdentity(value: string): void {
     if (this.identityStore) this.identityStore.set(value);
-    else this.storage.set(LINKSQUARED_STORAGE_KEY, value);
+    else this.storage.set(IDENTITY_KEY, value);
   }
 
   get userIdentifier(): string | null {

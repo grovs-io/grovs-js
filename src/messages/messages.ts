@@ -12,7 +12,18 @@ export interface GrovsMessage {
 export class MessagesService {
   constructor(private readonly client: GrovsClient) {}
 
+  /**
+   * Every other public surface checks this; messages did not, so requests
+   * went out before consent was granted, after setEnabled(false), and during
+   * server rendering. Consent mode promises nothing is transmitted until
+   * grantConsent() — a promise the messages endpoints were quietly breaking.
+   */
+  private get usable(): boolean {
+    return this.client.isEnabled && this.client.isAuthenticated();
+  }
+
   async getMessages(page: number): Promise<GrovsMessage[]> {
+    if (!this.usable) return [];
     const response = await this.client.service.messagesForDevice(page);
     if (!response.ok) {
       this.client.log.reportError(
@@ -25,6 +36,7 @@ export class MessagesService {
   }
 
   async numberOfUnreadMessages(): Promise<number> {
+    if (!this.usable) return 0;
     const response = await this.client.service.numberOfUnreadMessages();
     if (!response.ok) {
       this.client.log.reportError(
@@ -40,6 +52,7 @@ export class MessagesService {
   }
 
   async markMessageAsRead(id: number): Promise<boolean> {
+    if (!this.usable) return false;
     const response = await this.client.service.markMessageAsViewed(id);
     if (!response.ok) {
       this.client.log.reportError(
@@ -53,6 +66,7 @@ export class MessagesService {
   /** Backs automatic display, which v1 implemented and then commented out
    *  (grovs_manager.js:229-242). iOS ships it working. */
   async messagesForAutomaticDisplay(): Promise<GrovsMessage[]> {
+    if (!this.usable) return [];
     const response = await this.client.service.messagesForAutomaticDisplay();
     if (!response.ok) return [];
     return this.readNotifications(response.body);

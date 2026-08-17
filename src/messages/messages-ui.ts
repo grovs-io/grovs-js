@@ -3,6 +3,17 @@ import type { GrovsMessage, MessagesService } from './messages';
 
 const LIST_MODAL_ID = 'Grovs-modal';
 const PAGE_MODAL_ID = 'Grovs-page-modal';
+const PAGE_MODAL_CLASS = 'grovs-page-modal';
+
+/** Refuses anything that is not http(s), so javascript:/data: cannot load. */
+function safeUrl(url: string): string {
+  try {
+    const parsed = new URL(url, 'https://invalid.example');
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? url : 'about:blank';
+  } catch {
+    return 'about:blank';
+  }
+}
 
 /**
  * The messages modal, rendered into a shadow root.
@@ -25,6 +36,8 @@ const PAGE_MODAL_ID = 'Grovs-page-modal';
 export class MessagesUI {
   private page = 1;
   private isLoading = false;
+  /** Stops the scroll handler refetching for ever once the list is exhausted. */
+  private exhausted = false;
   private listElement: HTMLElement | null = null;
   private overlay: HTMLElement | null = null;
   private host: HTMLElement | null = null;
@@ -97,7 +110,7 @@ export class MessagesUI {
     });
 
     list.addEventListener('scroll', () => {
-      if (this.isLoading) return;
+      if (this.isLoading || this.exhausted) return;
       const scrolled = list.scrollTop;
       const scrollable = list.scrollHeight - list.clientHeight;
       if (scrollable > 0 && scrolled >= scrollable / 2) {
@@ -114,13 +127,16 @@ export class MessagesUI {
     this.overlay = overlay;
     this.listElement = list;
     this.page = 1;
+    this.exhausted = false;
 
     await this.loadMessages();
   }
 
   openPage(message: GrovsMessage): void {
     const modal = this.doc.createElement('div');
+    // Automatic display can open several at once, so they cannot share an id.
     modal.id = PAGE_MODAL_ID;
+    modal.className = PAGE_MODAL_CLASS;
     Object.assign(modal.style, {
       position: 'fixed',
       top: '0',
@@ -157,7 +173,12 @@ export class MessagesUI {
     header.appendChild(close);
 
     const frame = this.doc.createElement('iframe');
-    frame.src = message.access_url;
+    // Notification content is remote and rendered inside the customer's page.
+    // Sandboxing without allow-same-origin denies it access to the embedding
+    // document, and the scheme check keeps javascript:/data: URLs out.
+    frame.setAttribute('sandbox', 'allow-scripts allow-popups allow-forms');
+    frame.setAttribute('referrerpolicy', 'no-referrer');
+    frame.src = safeUrl(message.access_url);
     Object.assign(frame.style, {
       width: '100%',
       height: 'calc(100% - 40px)',
@@ -172,6 +193,9 @@ export class MessagesUI {
   }
 
   close(): void {
+    for (const modal of Array.from(this.doc.querySelectorAll(`.${PAGE_MODAL_CLASS}`))) {
+      modal.remove();
+    }
     this.host?.remove();
     this.host = null;
     this.overlay = null;
@@ -196,6 +220,7 @@ export class MessagesUI {
     this.isLoading = true;
     const messages = await this.service.getMessages(this.page);
     this.isLoading = false;
+    if (messages.length === 0) this.exhausted = true;
 
     if (this.page === 1) list.replaceChildren();
 

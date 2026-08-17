@@ -160,7 +160,12 @@ export class EventsHandler {
     let bytes = 0;
 
     for (const event of ordered.slice(0, MAX_BATCH_SIZE)) {
-      const body = enrich(event);
+      let body: unknown;
+      try {
+        body = enrich(event);
+      } catch {
+        continue;
+      }
       const size = JSON.stringify(body).length;
       if (bytes + size > KEEPALIVE_BUDGET_BYTES) break;
       bytes += size;
@@ -211,14 +216,21 @@ export class EventsHandler {
 
   /** Returns whether the batch was accepted, so the caller knows to continue. */
   private async sendChunks(chunk: QueuedEvent[], keepalive: boolean): Promise<boolean> {
-    const bodies = chunk.map((event) => enrich(event));
+    const { bodies, sendable, malformed } = this.encode(chunk);
+
+    // Drop anything unencodable rather than letting it block the queue.
+    if (malformed.length > 0) {
+      this.deps.queue.remove(malformed);
+      this.deps.logger.warn(`Discarded ${malformed.length} malformed queued event(s).`);
+    }
+    if (bodies.length === 0) return true;
     const response = await this.deps.api.addEvents(bodies, keepalive);
 
     if (!response.ok) {
       // Transport failure: everything stays queued and retries next tick.
       this.deps.logger.reportError(
         GrovsError.eventDispatchFailed,
-        `Event batch failed with status ${response.status}; ${chunk.length} events remain queued.`,
+        `Event batch failed with status ${response.status}; ${sendable.length} events remain queued.`,
       );
       return false;
     }
@@ -244,7 +256,30 @@ export class EventsHandler {
     // Both accepted and permanently-rejected events leave the queue. Indexing
     // is against the batch as sent, before any removal, so the arithmetic
     // cannot drift.
-    this.deps.queue.remove(chunk.map((event) => event.id));
+    this.deps.queue.remove(sendable.map((event) => event.id));
     return true;
+  }
+
+  /** Encodes what it can and reports what it cannot, so one bad record
+   *  cannot stop the batch it happens to sit in. */
+  private encode(chunk: QueuedEvent[]): {
+    bodies: unknown[];
+    sendable: QueuedEvent[];
+    malformed: string[];
+  } {
+    const bodies: unknown[] = [];
+    const sendable: QueuedEvent[] = [];
+    const malformed: string[] = [];
+
+    for (const event of chunk) {
+      try {
+        bodies.push(enrich(event));
+        sendable.push(event);
+      } catch {
+        malformed.push(event.id);
+      }
+    }
+
+    return { bodies, sendable, malformed };
   }
 }

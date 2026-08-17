@@ -59,23 +59,24 @@ export class FetchTransport implements Transport {
       : null;
     if (controller) init.signal = controller.signal;
 
-    let response: Response;
     try {
-      response = await fetch(req.url, init);
+      const response = await fetch(req.url, init);
+
+      // The body read stays inside the timeout: a server that answers headers
+      // promptly and then trickles the body would otherwise hang past it.
+      let body: unknown = null;
+      try {
+        const text = await response.text();
+        body = text ? (JSON.parse(text) as unknown) : null;
+      } catch {
+        body = null;
+      }
+
+      return { ok: response.ok, status: response.status, body };
     } catch {
       return { ok: false, status: 0, body: null };
     } finally {
       if (timer !== null) clearTimeout(timer);
     }
-
-    let body: unknown = null;
-    try {
-      const text = await response.text();
-      body = text ? (JSON.parse(text) as unknown) : null;
-    } catch {
-      body = null;
-    }
-
-    return { ok: response.ok, status: response.status, body };
   }
 }

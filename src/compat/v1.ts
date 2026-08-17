@@ -105,14 +105,25 @@ export class GrovsV1 {
     void this.messagesUI()?.showMessagesList();
   }
 
+  /**
+   * v1 called `error` on a failed fetch. The v2 service returns [] for both
+   * "no messages" and "request failed", so the two are told apart here —
+   * calling `response([])` on a network error would silently break an
+   * integrator's retry logic or error UI.
+   */
   async getMessages(
     page: number,
     response: SuccessCallback<GrovsMessage[]>,
     error: ErrorCallback,
   ): Promise<void> {
     deprecate('getMessages', 'Grovs.getMessages()');
-    void error;
-    response(await this.messages.getMessages(page));
+    const result = await this.client.service.messagesForDevice(page);
+    if (!result.ok) {
+      error('Grovs — could not fetch messages.');
+      return;
+    }
+    const list = (result.body as Record<string, unknown> | null)?.['notifications'];
+    response(Array.isArray(list) ? (list as GrovsMessage[]) : []);
   }
 
   async getNumberOfUnreadMessages(
@@ -120,8 +131,15 @@ export class GrovsV1 {
     error: ErrorCallback,
   ): Promise<void> {
     deprecate('getNumberOfUnreadMessages', 'Grovs.numberOfUnreadMessages()');
-    void error;
-    response(await this.messages.numberOfUnreadMessages());
+    const result = await this.client.service.numberOfUnreadMessages();
+    if (!result.ok) {
+      error('Grovs — could not fetch the unread message count.');
+      return;
+    }
+    const value = (result.body as Record<string, unknown> | null)?.[
+      'number_of_unread_notifications'
+    ];
+    response(typeof value === 'number' ? value : 0);
   }
 
   getAllReceivedData(): Record<string, unknown>[] {

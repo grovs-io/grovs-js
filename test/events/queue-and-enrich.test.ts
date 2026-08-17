@@ -209,9 +209,32 @@ describe('PersistedQueue', () => {
     const storage = new FakeStorage();
     storage.set(
       QUEUE_STORAGE_KEY,
-      JSON.stringify([{ createdAt: 1, event: 'view' }, { id: 'ok', createdAt: 2 }]),
+      JSON.stringify([
+        { createdAt: 1, event: 'view' },
+        { id: 'ok', createdAt: 2, event: 'view' },
+      ]),
     );
     expect(new PersistedQueue(storage, new FakeClock()).all().map((e) => e.id)).toEqual(['ok']);
+  });
+
+  /**
+   * A record with neither name reaches enrich(), which throws — inside a
+   * `void flush()`, so it surfaced as an unhandled rejection and every valid
+   * event behind it stayed blocked on that flush and every future one. Total
+   * and silent blast radius from one malformed record.
+   */
+  it('drops a stored entry carrying neither event nor event_name', () => {
+    const storage = new FakeStorage();
+    storage.set(
+      QUEUE_STORAGE_KEY,
+      JSON.stringify([
+        { id: 'poison', createdAt: 1, sessionId: 's' },
+        { id: 'good', createdAt: 2, event: 'view', sessionId: 's' },
+      ]),
+    );
+
+    const queue = new PersistedQueue(storage, new FakeClock());
+    expect(queue.all().map((e) => e.id)).toEqual(['good']);
   });
 
   it('back-fills a resolved path through transform', () => {

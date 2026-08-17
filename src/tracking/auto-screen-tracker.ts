@@ -40,6 +40,9 @@ export class AutoScreenTracker {
   private originalReplaceState: History['replaceState'] | null = null;
   private listeners: (() => void)[] = [];
   private frame: number | null = null;
+  /** rAF does not fire in a hidden tab, so the handle may be a timeout id —
+   *  and the two cancel functions are not interchangeable. */
+  private frameIsTimeout = false;
 
   screenNameProvider: ScreenNameProvider | null = null;
 
@@ -109,10 +112,7 @@ export class AutoScreenTracker {
     const win = getWindow();
     if (!win || !this.installed) return;
 
-    if (this.frame !== null) {
-      win.cancelAnimationFrame?.(this.frame);
-      this.frame = null;
-    }
+    this.cancelPending(win);
 
     for (const remove of this.listeners) remove();
     this.listeners = [];
@@ -142,7 +142,7 @@ export class AutoScreenTracker {
     const win = getWindow();
     if (!win) return;
 
-    if (this.frame !== null) win.cancelAnimationFrame?.(this.frame);
+    this.cancelPending(win);
 
     const run = (): void => {
       this.frame = null;
@@ -153,10 +153,20 @@ export class AutoScreenTracker {
     // navigation would sit unresolved until the tab is looked at again — and
     // then collapse to whatever the last URL happened to be.
     const hidden = getDocument()?.visibilityState === 'hidden';
-    this.frame =
-      !hidden && win.requestAnimationFrame
-        ? win.requestAnimationFrame(run)
-        : (setTimeout(run, 0) as unknown as number);
+    if (!hidden && win.requestAnimationFrame) {
+      this.frameIsTimeout = false;
+      this.frame = win.requestAnimationFrame(run);
+    } else {
+      this.frameIsTimeout = true;
+      this.frame = setTimeout(run, 0) as unknown as number;
+    }
+  }
+
+  private cancelPending(win: Window): void {
+    if (this.frame === null) return;
+    if (this.frameIsTimeout) clearTimeout(this.frame);
+    else win.cancelAnimationFrame?.(this.frame);
+    this.frame = null;
   }
 
   private trackCurrent(): void {

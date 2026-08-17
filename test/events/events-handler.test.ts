@@ -238,6 +238,28 @@ describe('EventsHandler flushing', () => {
   });
 });
 
+describe('EventsHandler malformed events', () => {
+  beforeEach(() => vi.useRealTimers());
+
+  // Belt and braces behind the storage-level guard: an unencodable event that
+  // reaches the handler must be discarded, not allowed to block the batch.
+  it('discards an unencodable event and sends the rest', async () => {
+    const { handler, transport, queue } = harness();
+
+    handler.enqueue({ id: 'poison', createdAt: 1, sessionId: 's', eventName: '' });
+    handler.log('app_open');
+    handler.onPathResolved(null);
+
+    await expect(handler.flush()).resolves.toBeUndefined();
+
+    const events = batchBodies(transport);
+    expect(events).toHaveLength(1);
+    expect(events[0]?.['event']).toBe('app_open');
+    expect(queue.size()).toBe(0);
+    handler.stop();
+  });
+});
+
 describe('EventsHandler cadence', () => {
   it('waits the 5 second leeway before the first flush', async () => {
     vi.useFakeTimers();
