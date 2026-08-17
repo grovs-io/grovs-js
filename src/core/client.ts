@@ -211,6 +211,14 @@ export class GrovsClient {
    * answered thirty seconds late should not cost the whole visit.
    */
   async grantConsent(): Promise<boolean> {
+    // "Disabling stops the SDK, it does not merely mute it" — so granting
+    // consent to a disabled SDK must not authenticate, fetch attribution and
+    // start timers behind its back.
+    if (!this.enabled) {
+      this.logger.warn('grantConsent() ignored: the SDK is disabled.');
+      return false;
+    }
+
     if (this.consentGranted) return this.context.authenticated;
 
     this.consentGranted = true;
@@ -223,6 +231,11 @@ export class GrovsClient {
     // in-memory array knows nothing about events a previous visit left in
     // localStorage — and an unconditional write would erase them.
     this.queue.mergeFromStorage();
+
+    // Everything it held is now in localStorage. Leaving it populated means a
+    // later configure({ requireConsent: true }) reads back events that were
+    // already delivered — or that reset() was documented as having deleted.
+    pendingConsentStore = null;
 
     // Consent mode deferred this; the identifier gets its mirror now — and
     // the existing value must be read back before authenticating. The
@@ -252,6 +265,9 @@ export class GrovsClient {
     for (const key of BULK_KEYS) this.storage.remove(key);
     this.storage.remove(IDENTITY_KEY);
     this.identityStore?.clear();
+    // Otherwise a later consent-pending client reads back exactly what this
+    // call was supposed to erase.
+    pendingConsentStore = null;
     this.context.reset();
     this.pipelineStarted = false;
     this.identityDirty = false;

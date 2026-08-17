@@ -27,6 +27,9 @@ export class MessagesService {
   async fetchMessages(page: number): Promise<GrovsMessage[] | null> {
     if (!this.usable) return null;
     const response = await this.client.service.messagesForDevice(page);
+    // Re-check after the await, as automatic display does: a response that
+    // arrives after setEnabled(false) or reset() must not reach the UI.
+    if (!this.usable) return null;
     if (!response.ok) {
       this.client.log.reportError(
         GrovsError.networkRequestFailed,
@@ -40,6 +43,7 @@ export class MessagesService {
   async fetchUnreadCount(): Promise<number | null> {
     if (!this.usable) return null;
     const response = await this.client.service.numberOfUnreadMessages();
+    if (!this.usable) return null;
     if (!response.ok) {
       this.client.log.reportError(
         GrovsError.networkRequestFailed,

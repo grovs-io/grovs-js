@@ -540,6 +540,156 @@ describe('consent keeps what was tracked across a reconfigure', () => {
   });
 });
 
+describe('the pending-consent store does not outlive its purpose', () => {
+  beforeEach(() => {
+    clearBrowserStorage();
+    __resetPendingConsentStore();
+  });
+
+  /**
+   * Sharing the store across clients is right; keeping it after its contents
+   * moved to localStorage is not. A later consent-pending client read back
+   * events that had already been delivered.
+   */
+  it('does not resurrect delivered events in a second consent cycle', async () => {
+    const first = new GrovsClient(
+      { apiKey: 'k', requireConsent: true },
+      { transport: new FakeTransport(), autoStartEvents: false },
+    );
+    await first.configure();
+    first.track('event-A');
+
+    const firstTransport = new FakeTransport();
+    firstTransport.enqueue(AUTH_OK);
+    const granting = new GrovsClient(
+      { apiKey: 'k', requireConsent: true },
+      { transport: firstTransport, autoStartEvents: false },
+    );
+    await granting.grantConsent();
+    granting.eventsHandler.onPathResolved(null);
+    await granting.flush();
+    granting.dispose();
+
+    // A second consent-pending client must start clean.
+    localStorage.removeItem('grovs_events');
+    const secondTransport = new FakeTransport();
+    secondTransport.enqueue(AUTH_OK);
+    const second = new GrovsClient(
+      { apiKey: 'k', requireConsent: true },
+      { transport: secondTransport, autoStartEvents: false },
+    );
+    await second.grantConsent();
+    second.eventsHandler.onPathResolved(null);
+    await second.flush();
+
+    const resent = secondTransport
+      .requestsTo('/events/batch')
+      .flatMap((r) => (r.body as { events: Record<string, unknown>[] }).events)
+      .map((e) => e['event_name']);
+
+    expect(resent).not.toContain('event-A');
+    second.shutdown();
+  });
+
+  // reset() is documented as clearing queued events. The shared store held
+  // exactly what it had just erased.
+  it('does not resurrect events that reset() deleted', async () => {
+    const client = new GrovsClient(
+      { apiKey: 'k', requireConsent: true },
+      { transport: new FakeTransport(), autoStartEvents: false },
+    );
+    await client.configure();
+    client.track('deleted-by-reset');
+    client.reset();
+
+    const transport = new FakeTransport();
+    transport.enqueue(AUTH_OK);
+    const next = new GrovsClient(
+      { apiKey: 'k', requireConsent: true },
+      { transport, autoStartEvents: false },
+    );
+    await next.grantConsent();
+    next.eventsHandler.onPathResolved(null);
+    await next.flush();
+
+    const sent = transport
+      .requestsTo('/events/batch')
+      .flatMap((r) => (r.body as { events: Record<string, unknown>[] }).events)
+      .map((e) => e['event_name']);
+
+    expect(sent).not.toContain('deleted-by-reset');
+    next.shutdown();
+  });
+});
+
+describe('a disabled SDK stays disabled', () => {
+  beforeEach(() => {
+    clearBrowserStorage();
+    __resetPendingConsentStore();
+  });
+
+  // "Disabling stops the SDK, it does not merely mute it."
+  it('does not authenticate when consent is granted while disabled', async () => {
+    const transport = new FakeTransport();
+    transport.enqueue(AUTH_OK);
+    const client = new GrovsClient(
+      { apiKey: 'k', requireConsent: true },
+      { transport, autoStartEvents: false },
+    );
+    await client.configure();
+
+    client.setEnabled(false);
+    await expect(client.grantConsent()).resolves.toBe(false);
+
+    expect(transport.requests).toHaveLength(0);
+    expect(client.isAuthenticated()).toBe(false);
+  });
+
+  it('grants normally once re-enabled', async () => {
+    const transport = new FakeTransport();
+    transport.enqueue(AUTH_OK);
+    const client = new GrovsClient(
+      { apiKey: 'k', requireConsent: true },
+      { transport, autoStartEvents: false },
+    );
+    await client.configure();
+
+    client.setEnabled(false);
+    await client.grantConsent();
+    client.setEnabled(true);
+
+    await expect(client.grantConsent()).resolves.toBe(true);
+    client.shutdown();
+  });
+
+  // The list rendered whatever returned, even if the SDK stopped mid-request.
+  it('drops an ordinary message response that lands after disable', async () => {
+    const transport = new FakeTransport();
+    transport.enqueue(AUTH_OK);
+    const client = new GrovsClient(
+      { apiKey: 'k' },
+      { transport, storage: new FakeStorage(), autoStartEvents: false },
+    );
+    await client.configure();
+
+    transport.enqueue({
+      ok: true,
+      status: 200,
+      body: {
+        notifications: [
+          { id: 1, title: 'A', subtitle: '', read: false, access_url: 'https://example.com/m' },
+        ],
+      },
+    });
+
+    const service = new MessagesService(client);
+    const pending = service.getMessages(1);
+    client.setEnabled(false);
+
+    await expect(pending).resolves.toEqual([]);
+  });
+});
+
 describe('messages re-check after the await', () => {
   beforeEach(clearBrowserStorage);
 
