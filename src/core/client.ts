@@ -281,7 +281,15 @@ export class GrovsClient {
 
     this.sessionPath = this.deeplinks.capture();
 
+    if (superseded()) return false;
+
     const response = await this.api.authenticate(this.deviceDetails());
+
+    // Check before reporting: a superseded attempt's failure is not the
+    // active configuration's failure, and firing onError for it sends the
+    // integrator chasing a config that no longer exists.
+    if (superseded()) return false;
+
     if (!response.ok) {
       this.reportAuthFailure(response.status, response.body);
       return false;
@@ -321,13 +329,17 @@ export class GrovsClient {
 
     let resolved = false;
     try {
-      resolved = await this.fetchPayload();
+      resolved = await this.fetchPayload(superseded);
     } finally {
       // Unblock in a finally: a throwing onDeeplink callback would otherwise
       // leave pathResolved false for ever, and every flush for the rest of
       // the visit — and every later one, since the queue persists — silently
       // does nothing.
-      this.events.onPathResolved(this.sessionPath);
+      //
+      // A retired client skips it: onPathResolved transforms the queue and
+      // schedules a write, which would rearm the debounce dispose() just
+      // cancelled.
+      if (!superseded()) this.events.onPathResolved(this.sessionPath);
     }
 
     if (superseded()) return false;
@@ -433,14 +445,35 @@ export class GrovsClient {
   }
 
   /** Stops timers and detaches listeners. Used by reset() and by tests. */
+  /**
+   * Stops timers and listeners. Reversible — reset() and setEnabled(false)
+   * both use it, and the client can configure again afterwards.
+   */
   shutdown(): void {
-    this.disposed = true;
     // Persist and cancel the pending debounce. Without this a retired client
     // still writes its queue a second later, over whatever replaced it.
     this.queue.flushToStorage();
     this.events.stop();
     this.lifecycle.stop();
     this.screens.stop();
+  }
+
+  /**
+   * Retires this client permanently. Only the facade calls it, when a second
+   * configure() replaces this instance.
+   *
+   * Kept separate from shutdown() deliberately: conflating the two made
+   * reset() and setEnabled(false) brick the client, so withdrawing consent
+   * and granting it again — the ordinary GDPR cycle both the README and
+   * MIGRATION.md teach — authenticated and then silently returned false.
+   */
+  dispose(): void {
+    this.disposed = true;
+    this.shutdown();
+    // A response still in flight cannot be cancelled, but its handler can be
+    // stopped from writing: otherwise a late batch acknowledgement persists
+    // this client's stale snapshot over the replacement's queue.
+    this.queue.freeze();
   }
 
   get eventsHandler(): EventsHandler {
@@ -563,7 +596,7 @@ export class GrovsClient {
 
   /** Returns whether the lookup completed, which is what licenses consuming
    *  the stored path. */
-  private async fetchPayload(): Promise<boolean> {
+  private async fetchPayload(superseded: () => boolean = () => false): Promise<boolean> {
     const path = this.sessionPath;
     const details = this.deviceDetails();
     const response = path
@@ -580,6 +613,10 @@ export class GrovsClient {
 
     const data = (response.body as Record<string, unknown> | null)?.['data'];
     if (!data || typeof data !== 'object') return true;
+
+    // A client replaced mid-lookup must not hand the integrator a payload for
+    // a configuration that no longer exists.
+    if (superseded()) return false;
 
     const payload = data as Record<string, unknown>;
     this.receivedPayloads.push(payload);

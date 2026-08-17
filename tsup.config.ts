@@ -3,12 +3,27 @@ import { defineConfig } from 'tsup';
 export default defineConfig([
   {
     entry: { grovs: 'src/index.ts' },
-    format: ['esm', 'cjs'],
+    format: ['esm'],
     dts: true,
     sourcemap: true,
     clean: true,
     treeshake: true,
     target: 'es2020',
+  },
+  {
+    entry: { grovs: 'src/index.ts' },
+    format: ['cjs'],
+    dts: true,
+    sourcemap: true,
+    treeshake: true,
+    target: 'es2020',
+    // The CJS build keeps the standard interop shape: the facade is
+    // `require('grovs').default`, with the named exports alongside it.
+    // Flattening it needs either a `module` reference in shared source —
+    // which esbuild then warns about in the ESM and IIFE builds, where
+    // `module` does not exist — or a hand-written wrapper. Neither is worth
+    // it while `import` is the primary path. scripts/check-exports.mjs pins
+    // the shape so it cannot drift, and the README documents it.
   },
   {
     // tsup appends ".global" for the iife format, so this emits

@@ -53,33 +53,13 @@ export class MessagesService {
     return typeof value === 'number' ? value : 0;
   }
 
+  /** Collapses "failed" and "none" into the array shape the v2 API promises. */
   async getMessages(page: number): Promise<GrovsMessage[]> {
-    if (!this.usable) return [];
-    const response = await this.client.service.messagesForDevice(page);
-    if (!response.ok) {
-      this.client.log.reportError(
-        GrovsError.networkRequestFailed,
-        `Could not fetch messages (page ${page}).`,
-      );
-      return [];
-    }
-    return this.readNotifications(response.body);
+    return (await this.fetchMessages(page)) ?? [];
   }
 
   async numberOfUnreadMessages(): Promise<number> {
-    if (!this.usable) return 0;
-    const response = await this.client.service.numberOfUnreadMessages();
-    if (!response.ok) {
-      this.client.log.reportError(
-        GrovsError.networkRequestFailed,
-        'Could not fetch the unread message count.',
-      );
-      return 0;
-    }
-    const value = (response.body as Record<string, unknown> | null)?.[
-      'number_of_unread_notifications'
-    ];
-    return typeof value === 'number' ? value : 0;
+    return (await this.fetchUnreadCount()) ?? 0;
   }
 
   async markMessageAsRead(id: number): Promise<boolean> {
@@ -100,6 +80,9 @@ export class MessagesService {
     if (!this.usable) return [];
     const response = await this.client.service.messagesForAutomaticDisplay();
     if (!response.ok) return [];
+    // Re-check after the await: setEnabled(false) during the request would
+    // otherwise still pop modals onto a page that asked the SDK to stop.
+    if (!this.usable) return [];
     return this.readNotifications(response.body);
   }
 

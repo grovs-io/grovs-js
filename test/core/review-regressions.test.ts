@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { GrovsClient } from '../../src/core/client';
 import { MessagesService } from '../../src/messages/messages';
 import { PersistedQueue } from '../../src/storage/persisted-queue';
@@ -279,8 +279,8 @@ describe('a retired client stays retired', () => {
   beforeEach(clearBrowserStorage);
 
   // The generation counter is per-client, so it cannot see the facade
-  // replacing one client with another. Only shutdown() can.
-  it('does not resume after shutdown, even if its authentication was in flight', async () => {
+  // replacing one client with another. Only dispose() can.
+  it('does not resume after dispose, even if its authentication was in flight', async () => {
     const transport = new FakeTransport();
     transport.enqueue(AUTH_OK);
     const client = new GrovsClient(
@@ -289,9 +289,79 @@ describe('a retired client stays retired', () => {
     );
 
     const pending = client.configure();
-    client.shutdown();
+    client.dispose();
 
     await expect(pending).resolves.toBe(false);
+  });
+
+  /**
+   * Retirement and teardown are different operations. Conflating them made
+   * reset() and setEnabled(false) brick the client, so withdrawing consent
+   * and granting it again — the ordinary GDPR cycle the README and
+   * MIGRATION.md both teach — authenticated and then returned false.
+   */
+  it('can be granted consent again after reset', async () => {
+    const transport = new FakeTransport();
+    transport.enqueue(AUTH_OK).enqueue(AUTH_OK);
+    const client = new GrovsClient(
+      { apiKey: 'k', requireConsent: true },
+      { transport, storage: new FakeStorage(), autoStartEvents: false },
+    );
+
+    await expect(client.grantConsent()).resolves.toBe(true);
+    client.reset();
+
+    await expect(client.grantConsent()).resolves.toBe(true);
+    expect(client.isAuthenticated()).toBe(true);
+    client.shutdown();
+  });
+
+  it('can configure again after reset', async () => {
+    const transport = new FakeTransport();
+    transport.enqueue(AUTH_OK).enqueue(AUTH_OK);
+    const client = new GrovsClient(
+      { apiKey: 'k' },
+      { transport, storage: new FakeStorage(), autoStartEvents: false },
+    );
+
+    await client.configure();
+    client.reset();
+
+    await expect(client.configure()).resolves.toBe(true);
+    client.shutdown();
+  });
+
+  it('can configure again after a disable/enable cycle', async () => {
+    const transport = new FakeTransport();
+    transport.enqueue(AUTH_OK).enqueue(AUTH_OK);
+    const client = new GrovsClient(
+      { apiKey: 'k' },
+      { transport, storage: new FakeStorage(), autoStartEvents: false },
+    );
+
+    await client.configure();
+    client.setEnabled(false);
+    client.setEnabled(true);
+
+    await expect(client.configure()).resolves.toBe(true);
+    client.shutdown();
+  });
+
+  // A superseded attempt's failure is not the active configuration's failure.
+  it('does not report an obsolete authentication failure', async () => {
+    const onError = vi.fn();
+    const transport = new FakeTransport();
+    transport.enqueueStatus(403, { error: 'Invalid credentials' });
+    const client = new GrovsClient(
+      { apiKey: 'k', onError },
+      { transport, storage: new FakeStorage() },
+    );
+
+    const pending = client.configure();
+    client.dispose();
+    await pending;
+
+    expect(onError).not.toHaveBeenCalled();
   });
 });
 
@@ -332,6 +402,38 @@ describe('consent merge survives the persist debounce', () => {
     expect(sent.map((e) => e['event_id'])).toContain('from-previous-visit');
     expect(sent.map((e) => e['event_name'])).toContain('this-visit');
     client.shutdown();
+  });
+});
+
+describe('messages re-check after the await', () => {
+  beforeEach(clearBrowserStorage);
+
+  // The guard ran before the request. Disabling while it was in flight still
+  // popped modals onto a page that had asked the SDK to stop.
+  it('opens nothing when the SDK is disabled mid-request', async () => {
+    const transport = new FakeTransport();
+    transport.enqueue(AUTH_OK);
+    const client = new GrovsClient(
+      { apiKey: 'k' },
+      { transport, storage: new FakeStorage(), autoStartEvents: false },
+    );
+    await client.configure();
+
+    transport.enqueue({
+      ok: true,
+      status: 200,
+      body: {
+        notifications: [
+          { id: 1, title: 'A', subtitle: '', read: false, access_url: 'https://example.com/m' },
+        ],
+      },
+    });
+
+    const service = new MessagesService(client);
+    const pending = service.messagesForAutomaticDisplay();
+    client.setEnabled(false);
+
+    await expect(pending).resolves.toEqual([]);
   });
 });
 

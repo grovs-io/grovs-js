@@ -38,7 +38,7 @@ export const Grovs = {
     // cannot help here: a second call builds a *new* client, so without this
     // the previous one's flush interval, lifecycle listeners and History
     // patch stay live and everything is tracked twice.
-    client?.shutdown();
+    client?.dispose();
 
     client = new GrovsClient(config);
     links = new LinkGenerator(client);
@@ -236,8 +236,11 @@ export const Grovs = {
   V1: GrovsV1,
 };
 
-export { GrovsError } from './net/errors';
-export { SDK_VERSION } from './version';
+import { GrovsError } from './net/errors';
+import { SDK_VERSION } from './version';
+
+export { GrovsError };
+export { SDK_VERSION };
 export type { GrovsConfig, DeeplinkCallback } from './core/config';
 export type { LogLevel, ErrorCallback } from './logging/logger';
 export type { GrovsMessage } from './messages/messages';

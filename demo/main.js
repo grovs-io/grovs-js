@@ -85,8 +85,8 @@ function stubFor(path) {
         status: 200,
         body: {
           notifications: [
-            { id: 1, title: 'Welcome', subtitle: 'Thanks for trying Grovs', read: false, access_url: 'about:blank' },
-            { id: 2, title: 'Release notes', subtitle: 'v2 is out', read: true, access_url: 'about:blank' },
+            { id: 1, title: 'Welcome', subtitle: 'Thanks for trying Grovs', read: false, access_url: 'https://example.com/message' },
+            { id: 2, title: 'Release notes', subtitle: 'v2 is out', read: true, access_url: 'https://example.com/message' },
           ],
         },
       };
@@ -99,7 +99,7 @@ function stubFor(path) {
         status: 200,
         body: {
           notifications: autoDisplayEnabled
-            ? [{ id: 3, title: 'Automatic', subtitle: 'Opened without being asked', read: false, access_url: 'about:blank' }]
+            ? [{ id: 3, title: 'Automatic', subtitle: 'Opened without being asked', read: false, access_url: 'https://example.com/message' }]
             : [],
         },
       };

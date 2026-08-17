@@ -32,6 +32,10 @@ export class PersistedQueue {
   private events: QueuedEvent[] = [];
   private timer: ReturnType<typeof setTimeout> | null = null;
   private dirty = false;
+  /** Set when the owning client is retired. A request already in flight
+   *  cannot be cancelled, but its handler can be stopped from persisting a
+   *  snapshot that is now stale. */
+  private frozen = false;
 
   constructor(
     private readonly storage: Storage,
@@ -116,6 +120,14 @@ export class PersistedQueue {
     this.flushToStorage();
   }
 
+  freeze(): void {
+    this.frozen = true;
+    if (this.timer !== null) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+  }
+
   /** Forces a synchronous write. Called on pagehide, where a timer will not fire. */
   flushToStorage(): void {
     if (this.timer !== null) {
@@ -137,6 +149,7 @@ export class PersistedQueue {
   }
 
   private schedulePersist(): void {
+    if (this.frozen) return;
     this.dirty = true;
     if (this.timer !== null) return;
     this.timer = setTimeout(() => {
@@ -146,6 +159,7 @@ export class PersistedQueue {
   }
 
   private persist(): void {
+    if (this.frozen) return;
     try {
       this.storage.set(QUEUE_STORAGE_KEY, JSON.stringify(this.events));
       this.dirty = false;

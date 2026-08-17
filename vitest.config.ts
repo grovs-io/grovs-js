@@ -28,6 +28,10 @@ export default defineConfig({
         'src/compat/**': { lines: 85 },
         'src/logging/**': { lines: 90 },
         'src/messages/**': { lines: 70 },
+        // A ratchet, not a target: the facade is mostly delegation, but it
+        // once routed around the client's enabled guard, so it must not slip
+        // further than it already has.
+        'src/index.ts': { lines: 50 },
       },
     },
   },

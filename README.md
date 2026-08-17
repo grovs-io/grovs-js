@@ -48,6 +48,16 @@ patch release, which defeats SRI and leaves you executing whatever the CDN
 serves. The published release notes carry the `integrity` value for each
 version.
 
+### CommonJS
+
+`import` is the primary path. From `require`, the facade is the default
+export and the named exports sit alongside it:
+
+```javascript
+const { default: Grovs, GrovsError } = require("grovs");
+await Grovs.configure({ apiKey: "your-api-key" });
+```
+
 ### TypeScript
 
 Types ship with the package; no `@types/grovs` is needed.
