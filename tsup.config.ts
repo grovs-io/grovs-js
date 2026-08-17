@@ -22,6 +22,10 @@ export default defineConfig([
     // tsup's IIFE wraps the module namespace, so a bare <script> would leave
     // window.Grovs.default rather than window.Grovs and Grovs.configure would
     // be undefined. See plan Task 1 / spec T8.
-    footer: { js: 'Grovs=Grovs.default||Grovs;' },
+    //
+    // Merge rather than replace: taking `default` alone dropped every named
+    // export, so a script-tag user could not reach GrovsError and had to
+    // hardcode the numeric codes the README tells them not to.
+    footer: { js: 'Grovs=Object.assign(Grovs.default||{},Grovs);' },
   },
 ]);

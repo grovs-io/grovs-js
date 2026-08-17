@@ -22,6 +22,37 @@ export class MessagesService {
     return this.client.isEnabled && this.client.isAuthenticated();
   }
 
+  /** Distinguishes "no messages" from "request failed", which the array
+   *  return cannot. The v1 shim needs the difference for its error callback. */
+  async fetchMessages(page: number): Promise<GrovsMessage[] | null> {
+    if (!this.usable) return null;
+    const response = await this.client.service.messagesForDevice(page);
+    if (!response.ok) {
+      this.client.log.reportError(
+        GrovsError.networkRequestFailed,
+        `Could not fetch messages (page ${page}).`,
+      );
+      return null;
+    }
+    return this.readNotifications(response.body);
+  }
+
+  async fetchUnreadCount(): Promise<number | null> {
+    if (!this.usable) return null;
+    const response = await this.client.service.numberOfUnreadMessages();
+    if (!response.ok) {
+      this.client.log.reportError(
+        GrovsError.networkRequestFailed,
+        'Could not fetch the unread message count.',
+      );
+      return null;
+    }
+    const value = (response.body as Record<string, unknown> | null)?.[
+      'number_of_unread_notifications'
+    ];
+    return typeof value === 'number' ? value : 0;
+  }
+
   async getMessages(page: number): Promise<GrovsMessage[]> {
     if (!this.usable) return [];
     const response = await this.client.service.messagesForDevice(page);

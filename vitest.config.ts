@@ -11,8 +11,11 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'json-summary'],
       include: ['src/**/*.ts'],
-      // index.ts is a delegating facade; contract/ is data consumed in Phase 1.
-      exclude: ['src/index.ts', 'src/contract/**'],
+      // contract/ is declarative data. index.ts is included: it is not purely
+      // delegating — showMessagesList and displayAutomaticMessages reach the
+      // DOM surface directly, which is how they once routed around the
+      // client's enabled guard with no test to notice.
+      exclude: ['src/contract/**'],
       // Tiered rather than flat: a flat 85% can be met while leaving the
       // batching logic untested (spec Testing / Coverage gate).
       thresholds: {
@@ -22,6 +25,8 @@ export default defineConfig({
         'src/links/**': { lines: 90 },
         'src/events/**': { lines: 90 },
         'src/tracking/**': { lines: 90 },
+        'src/compat/**': { lines: 85 },
+        'src/logging/**': { lines: 90 },
         'src/messages/**': { lines: 70 },
       },
     },

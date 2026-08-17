@@ -195,6 +195,96 @@ describe('GrovsV1 compatibility shim', () => {
     expect(err).not.toHaveBeenCalled();
   });
 
+  // The error callbacks v1 integrators wired to retry logic and error UI.
+  it('calls the error callback when message fetching fails', async () => {
+    const transport = new FakeTransport();
+    transport.enqueue(AUTH_OK).enqueue({ ok: true, status: 200, body: { data: null } });
+    const sdk = new GrovsV1('k', false, () => undefined, {
+      transport,
+      storage: new FakeStorage(),
+    });
+    await sdk.start();
+
+    transport.enqueueStatus(500, {});
+    const response = vi.fn();
+    const error = vi.fn();
+    await sdk.getMessages(1, response, error);
+
+    expect(response).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledOnce();
+  });
+
+  it('calls the error callback when the unread count fails', async () => {
+    const transport = new FakeTransport();
+    transport.enqueue(AUTH_OK).enqueue({ ok: true, status: 200, body: { data: null } });
+    const sdk = new GrovsV1('k', false, () => undefined, {
+      transport,
+      storage: new FakeStorage(),
+    });
+    await sdk.start();
+
+    transport.enqueueStatus(500, {});
+    const response = vi.fn();
+    const error = vi.fn();
+    await sdk.getNumberOfUnreadMessages(response, error);
+
+    expect(response).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledOnce();
+  });
+
+  it('calls the error callback when marking read fails', async () => {
+    const transport = new FakeTransport();
+    transport.enqueue(AUTH_OK).enqueue({ ok: true, status: 200, body: { data: null } });
+    const sdk = new GrovsV1('k', false, () => undefined, {
+      transport,
+      storage: new FakeStorage(),
+    });
+    await sdk.start();
+
+    transport.enqueueStatus(500, {});
+    const response = vi.fn();
+    const error = vi.fn();
+    await sdk.markMessageAsRead(
+      { id: 1, title: '', subtitle: '', read: false, access_url: '' },
+      response,
+      error,
+    );
+
+    expect(response).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledOnce();
+  });
+
+  it('does not invoke the auth callback when authentication fails', async () => {
+    const transport = new FakeTransport();
+    transport.enqueueStatus(403, { error: 'Invalid credentials' });
+    const sdk = new GrovsV1('k', false, () => undefined, {
+      transport,
+      storage: new FakeStorage(),
+    });
+
+    const onAuth = vi.fn();
+    await sdk.start(onAuth);
+
+    expect(onAuth).not.toHaveBeenCalled();
+    expect(sdk.authenticated()).toBe(false);
+  });
+
+  it('opens the messages list through the v1 method', async () => {
+    document.body.replaceChildren();
+    const transport = new FakeTransport();
+    transport.enqueue(AUTH_OK).enqueue({ ok: true, status: 200, body: { data: null } });
+    const sdk = new GrovsV1('k', false, () => undefined, {
+      transport,
+      storage: new FakeStorage(),
+    });
+    await sdk.start();
+
+    transport.enqueue({ ok: true, status: 200, body: { notifications: [] } });
+    sdk.showMessagesList();
+
+    await vi.waitFor(() => expect(document.getElementById('Grovs-modal')).not.toBeNull());
+  });
+
   it('returns received payloads through getAllReceivedData', async () => {
     const transport = new FakeTransport();
     transport

@@ -142,11 +142,19 @@ test.describe('Grovs SDK end to end', () => {
         version: g?.['SDK_VERSION'],
       };
     });
+
+    const errorCodes = await page.evaluate(() => {
+      const g = (window as unknown as { Grovs?: Record<string, unknown> }).Grovs;
+      return g?.['GrovsError'] as Record<string, number> | undefined;
+    });
+    expect(errorCodes?.['authenticationFailed']).toBe(1);
+    // Named exports must survive the IIFE wrapper too: the README tells
+    // script-tag users to compare against GrovsError rather than raw numbers.
     expect(surface).toEqual({
       configure: 'function',
       track: 'function',
       v1: 'function',
-      version: undefined,
+      version: '2.0',
     });
   });
 

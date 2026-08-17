@@ -93,6 +93,80 @@ describe('deep link attribution does not outlive its visit', () => {
     client.shutdown();
   });
 
+  /**
+   * Consuming the durable copy retired the value the handlers read from, so
+   * everything after configure() — screen views, custom events, the final
+   * time_spent — lost its path. The arrival was attributed and the whole
+   * session behind it was not.
+   */
+  it('keeps stamping the path on events for the rest of the visit', async () => {
+    const storage = new FakeStorage();
+    storage.set('Grovs_path', 'campaign-a');
+
+    const transport = new FakeTransport();
+    transport.enqueue(AUTH_OK);
+    const client = new GrovsClient({ apiKey: 'k' }, { transport, storage, autoStartEvents: false });
+    await client.configure();
+
+    client.track('after-configure');
+    client.eventsHandler.onPathResolved(null);
+    await client.flush();
+
+    const sent = transport
+      .requestsTo('/events/batch')
+      .flatMap((r) => (r.body as { events: Record<string, unknown>[] }).events);
+
+    expect(sent[0]?.['path']).toBe('campaign-a');
+    // ...while the durable copy is gone, so it cannot follow them to a later
+    // direct visit.
+    expect(storage.get('Grovs_path')).toBeNull();
+    client.shutdown();
+  });
+
+  // A 5xx must not cost the campaign attribution: the next load retries.
+  it('keeps the stored path when the payload lookup fails', async () => {
+    const storage = new FakeStorage();
+    storage.set('Grovs_path', 'campaign-a');
+
+    const transport = new FakeTransport();
+    transport.enqueue(AUTH_OK).enqueueStatus(500, {});
+    const client = new GrovsClient({ apiKey: 'k' }, { transport, storage, autoStartEvents: false });
+    await client.configure();
+
+    expect(storage.get('Grovs_path')).toBe('campaign-a');
+    client.shutdown();
+  });
+
+  // The callback is the integrator's code; a throw from it left pathResolved
+  // false, so every flush for the rest of the visit silently did nothing.
+  it('still delivers events when onDeeplink throws', async () => {
+    const transport = new FakeTransport();
+    transport
+      .enqueue(AUTH_OK)
+      .enqueue({ ok: true, status: 200, body: { data: { screen: 'x' } } });
+
+    const client = new GrovsClient(
+      {
+        apiKey: 'k',
+        onDeeplink: () => {
+          throw new Error('integrator bug');
+        },
+      },
+      { transport, storage: new FakeStorage(), autoStartEvents: false },
+    );
+
+    await expect(client.configure()).resolves.toBe(true);
+
+    client.track('after-throw');
+    await client.flush();
+
+    const sent = transport
+      .requestsTo('/events/batch')
+      .flatMap((r) => (r.body as { events: Record<string, unknown>[] }).events);
+    expect(sent.map((e) => e['event_name'])).toContain('after-throw');
+    client.shutdown();
+  });
+
   it('sends the path on the visit that carried it', async () => {
     const storage = new FakeStorage();
     storage.set('Grovs_path', 'campaign-a');
@@ -197,6 +271,66 @@ describe('concurrent configure()', () => {
 
     expect(first).toBe(false);
     expect(second).toBe(true);
+    client.shutdown();
+  });
+});
+
+describe('a retired client stays retired', () => {
+  beforeEach(clearBrowserStorage);
+
+  // The generation counter is per-client, so it cannot see the facade
+  // replacing one client with another. Only shutdown() can.
+  it('does not resume after shutdown, even if its authentication was in flight', async () => {
+    const transport = new FakeTransport();
+    transport.enqueue(AUTH_OK);
+    const client = new GrovsClient(
+      { apiKey: 'k' },
+      { transport, storage: new FakeStorage() },
+    );
+
+    const pending = client.configure();
+    client.shutdown();
+
+    await expect(pending).resolves.toBe(false);
+  });
+});
+
+describe('consent merge survives the persist debounce', () => {
+  beforeEach(clearBrowserStorage);
+
+  // Once the 1s debounce has fired, the pre-consent memory store holds a
+  // queue of its own — and copying it across would overwrite the durable one
+  // before the merge could read it.
+  it('keeps both queues when consent is granted after the debounce', async () => {
+    localStorage.setItem(
+      'grovs_events',
+      JSON.stringify([
+        { id: 'from-previous-visit', createdAt: Date.now(), event: 'app_open', sessionId: 's' },
+      ]),
+    );
+
+    const transport = new FakeTransport();
+    transport.enqueue(AUTH_OK);
+    const client = new GrovsClient(
+      { apiKey: 'k', requireConsent: true },
+      { transport, autoStartEvents: false },
+    );
+    await client.configure();
+    client.track('this-visit');
+
+    // Let the debounce write into the pre-consent memory store.
+    await new Promise((r) => setTimeout(r, 1100));
+    await client.grantConsent();
+
+    client.eventsHandler.onPathResolved(null);
+    await client.flush();
+
+    const sent = transport
+      .requestsTo('/events/batch')
+      .flatMap((r) => (r.body as { events: Record<string, unknown>[] }).events);
+
+    expect(sent.map((e) => e['event_id'])).toContain('from-previous-visit');
+    expect(sent.map((e) => e['event_name'])).toContain('this-visit');
     client.shutdown();
   });
 });

@@ -5,10 +5,16 @@ const LIST_MODAL_ID = 'Grovs-modal';
 const PAGE_MODAL_ID = 'Grovs-page-modal';
 const PAGE_MODAL_CLASS = 'grovs-page-modal';
 
-/** Refuses anything that is not http(s), so javascript:/data: cannot load. */
+/**
+ * Refuses anything that is not an absolute http(s) URL.
+ *
+ * No base is supplied, so a relative value fails to parse rather than
+ * resolving against the customer's own origin — which would let notification
+ * content frame the embedding site.
+ */
 function safeUrl(url: string): string {
   try {
-    const parsed = new URL(url, 'https://invalid.example');
+    const parsed = new URL(url);
     return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? url : 'about:blank';
   } catch {
     return 'about:blank';
@@ -41,6 +47,9 @@ export class MessagesUI {
   private listElement: HTMLElement | null = null;
   private overlay: HTMLElement | null = null;
   private host: HTMLElement | null = null;
+  /** Only the modals this instance opened — the v1 shim builds its own UI,
+   *  and close() must not reach across and remove that one's. */
+  private readonly ownModals = new Set<HTMLElement>();
 
   constructor(
     private readonly doc: Document,
@@ -169,7 +178,10 @@ export class MessagesUI {
       color: 'white',
       cursor: 'pointer',
     });
-    close.addEventListener('click', () => modal.remove());
+    close.addEventListener('click', () => {
+      modal.remove();
+      this.ownModals.delete(modal);
+    });
     header.appendChild(close);
 
     const frame = this.doc.createElement('iframe');
@@ -188,14 +200,14 @@ export class MessagesUI {
     modal.appendChild(header);
     modal.appendChild(frame);
     this.doc.body.appendChild(modal);
+    this.ownModals.add(modal);
 
     void this.service.markMessageAsRead(message.id);
   }
 
   close(): void {
-    for (const modal of Array.from(this.doc.querySelectorAll(`.${PAGE_MODAL_CLASS}`))) {
-      modal.remove();
-    }
+    for (const modal of this.ownModals) modal.remove();
+    this.ownModals.clear();
     this.host?.remove();
     this.host = null;
     this.overlay = null;

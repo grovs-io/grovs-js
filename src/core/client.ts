@@ -46,6 +46,16 @@ const BULK_KEYS = [
   STORED_PATH_KEY,
 ] as const;
 
+/**
+ * Keys carried across by the consent switch.
+ *
+ * The queue is excluded deliberately: once the persist debounce has fired,
+ * the pre-consent memory store holds a queue of its own, and copying it would
+ * overwrite whatever an earlier visit left in localStorage *before* the merge
+ * could read it. The queue is merged separately, which keeps both sides.
+ */
+const SWITCH_KEYS = BULK_KEYS.filter((key) => key !== QUEUE_STORAGE_KEY);
+
 export interface ClientDeps {
   transport?: Transport;
   storage?: Storage;
@@ -74,7 +84,19 @@ export class GrovsClient {
   private payments: PaymentEventsHandler | null = null;
   private pipelineStarted = false;
   private configureGeneration = 0;
+  private disposed = false;
   private readonly storageInjected: boolean;
+
+  /**
+   * The attribution path for this visit.
+   *
+   * The durable copy is consumed once resolved, so it cannot follow the
+   * visitor into later direct visits. This in-memory copy is what events are
+   * stamped with for the rest of the session — reading the durable one after
+   * the consume returned null, which left everything after configure()
+   * unattributed.
+   */
+  private sessionPath: string | null = null;
 
   private enabled = true;
   /**
@@ -138,7 +160,7 @@ export class GrovsClient {
       session: this.session,
       clock: this.clock,
       logger: this.logger,
-      currentPath: () => this.deeplinks.getStoredPath(),
+      currentPath: () => this.sessionPath,
       isEnabled: () => this.enabled,
     });
     this.custom = new CustomEventsHandler({
@@ -146,7 +168,7 @@ export class GrovsClient {
       session: this.session,
       clock: this.clock,
       logger: this.logger,
-      currentPath: () => this.deeplinks.getStoredPath(),
+      currentPath: () => this.sessionPath,
     });
     this.lifecycle = new LifecycleTracker({
       clock: this.clock,
@@ -178,7 +200,7 @@ export class GrovsClient {
     // One switch repoints the queue, session, deeplink resolver and counters
     // together. Migrating each holder separately is how the session and the
     // captured path previously got stranded on the memory store forever.
-    this.storage.switchTo(resolveBulkStorage(this.logger), BULK_KEYS);
+    this.storage.switchTo(resolveBulkStorage(this.logger), SWITCH_KEYS);
     // Merge before persisting. The queue was built over empty memory, so its
     // in-memory array knows nothing about events a previous visit left in
     // localStorage — and an unconditional write would erase them.
@@ -231,7 +253,9 @@ export class GrovsClient {
     // slow first call can complete afterwards and restart its timers,
     // lifecycle listeners and screen tracker — two clients, everything twice.
     const generation = ++this.configureGeneration;
-    const superseded = (): boolean => generation !== this.configureGeneration;
+    // `disposed` covers the facade case: Grovs.configure() builds a *new*
+    // client, so the old one's counter never moves — only its shutdown does.
+    const superseded = (): boolean => generation !== this.configureGeneration || this.disposed;
 
     if (!this.consentGranted) {
       this.logger.info(
@@ -255,7 +279,7 @@ export class GrovsClient {
       return false;
     }
 
-    this.deeplinks.capture();
+    this.sessionPath = this.deeplinks.capture();
 
     const response = await this.api.authenticate(this.deviceDetails());
     if (!response.ok) {
@@ -295,14 +319,24 @@ export class GrovsClient {
     if (superseded()) return false;
     if (this.autoStartEvents) this.startEventPipeline(hadIdentity);
 
-    await this.fetchPayload();
+    let resolved = false;
+    try {
+      resolved = await this.fetchPayload();
+    } finally {
+      // Unblock in a finally: a throwing onDeeplink callback would otherwise
+      // leave pathResolved false for ever, and every flush for the rest of
+      // the visit — and every later one, since the queue persists — silently
+      // does nothing.
+      this.events.onPathResolved(this.sessionPath);
+    }
 
-    // Only now is the attribution path known, so only now may events leave.
-    // Consume it: T2 split read from consume so the path could be retired
-    // once used. Leaving it stored means a visitor who arrived via campaign A
-    // keeps receiving A's payload, and keeps having later direct visits
-    // attributed to A, indefinitely.
-    this.events.onPathResolved(this.deeplinks.consumeStoredPath());
+    if (superseded()) return false;
+
+    // Retire the durable copy only once it has actually been attributed. A
+    // 5xx or a dropped connection must not cost the campaign attribution;
+    // the next page load retries with it. The in-memory copy carries the rest
+    // of this visit either way.
+    if (resolved) this.deeplinks.consumeStoredPath();
 
     if (this.identityDirty) void this.pushIdentity();
 
@@ -400,6 +434,10 @@ export class GrovsClient {
 
   /** Stops timers and detaches listeners. Used by reset() and by tests. */
   shutdown(): void {
+    this.disposed = true;
+    // Persist and cancel the pending debounce. Without this a retired client
+    // still writes its queue a second later, over whatever replaced it.
+    this.queue.flushToStorage();
     this.events.stop();
     this.lifecycle.stop();
     this.screens.stop();
@@ -523,8 +561,10 @@ export class GrovsClient {
     );
   }
 
-  private async fetchPayload(): Promise<void> {
-    const path = this.deeplinks.getStoredPath();
+  /** Returns whether the lookup completed, which is what licenses consuming
+   *  the stored path. */
+  private async fetchPayload(): Promise<boolean> {
+    const path = this.sessionPath;
     const details = this.deviceDetails();
     const response = path
       ? await this.api.payloadForDeviceAndPath(details, path)
@@ -535,15 +575,24 @@ export class GrovsClient {
         GrovsError.networkRequestFailed,
         'Could not fetch the deep link payload.',
       );
-      return;
+      return false;
     }
 
     const data = (response.body as Record<string, unknown> | null)?.['data'];
-    if (!data || typeof data !== 'object') return;
+    if (!data || typeof data !== 'object') return true;
 
     const payload = data as Record<string, unknown>;
     this.receivedPayloads.push(payload);
-    this.config.onDeeplink?.(payload);
+
+    // The callback is the integrator's code. A throw from it must not take
+    // down configure() or the event pipeline behind it.
+    try {
+      this.config.onDeeplink?.(payload);
+    } catch {
+      this.logger.error('The onDeeplink callback threw; continuing.');
+    }
+
+    return true;
   }
 
   /**

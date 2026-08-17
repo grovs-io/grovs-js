@@ -117,13 +117,12 @@ export class GrovsV1 {
     error: ErrorCallback,
   ): Promise<void> {
     deprecate('getMessages', 'Grovs.getMessages()');
-    const result = await this.client.service.messagesForDevice(page);
-    if (!result.ok) {
+    const result = await this.messages.fetchMessages(page);
+    if (result === null) {
       error('Grovs — could not fetch messages.');
       return;
     }
-    const list = (result.body as Record<string, unknown> | null)?.['notifications'];
-    response(Array.isArray(list) ? (list as GrovsMessage[]) : []);
+    response(result);
   }
 
   async getNumberOfUnreadMessages(
@@ -131,15 +130,12 @@ export class GrovsV1 {
     error: ErrorCallback,
   ): Promise<void> {
     deprecate('getNumberOfUnreadMessages', 'Grovs.numberOfUnreadMessages()');
-    const result = await this.client.service.numberOfUnreadMessages();
-    if (!result.ok) {
+    const result = await this.messages.fetchUnreadCount();
+    if (result === null) {
       error('Grovs — could not fetch the unread message count.');
       return;
     }
-    const value = (result.body as Record<string, unknown> | null)?.[
-      'number_of_unread_notifications'
-    ];
-    response(typeof value === 'number' ? value : 0);
+    response(result);
   }
 
   getAllReceivedData(): Record<string, unknown>[] {
