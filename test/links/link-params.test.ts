@@ -154,12 +154,14 @@ describe('PaymentEventsHandler', () => {
     });
 
     expect(ok).toBe(true);
+    // Wire names must match iOS's TransactionData.toData() and the backend's
+    // permit list (event_type / price_cents / date), or Rails drops them.
     expect(transport.last?.body).toEqual({
-      type: 'buy',
-      price_in_cents: 1999,
+      event_type: 'buy',
+      price_cents: 1999,
       currency: 'USD',
       product_id: 'com.acme.coins.100',
-      start_date: '2026-01-01T00:00:00.000Z',
+      date: '2026-01-01T00:00:00.000Z',
     });
   });
 
@@ -175,7 +177,7 @@ describe('PaymentEventsHandler', () => {
       productID: 'p',
     });
 
-    expect((transport.last?.body as Record<string, string>)['start_date']).toMatch(
+    expect((transport.last?.body as Record<string, string>)['date']).toMatch(
       /^\d{4}-\d{2}-\d{2}T/,
     );
   });

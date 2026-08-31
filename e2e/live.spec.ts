@@ -152,8 +152,16 @@ test.describe('live backend', () => {
     await openLive(page, `?Grovs=${encodeURIComponent(path)}`);
     await configure(page);
 
+    // Authentication completes before the path lookup goes out, and the demo
+    // records a request before its response arrives — so poll on the status,
+    // not the call count, or the assertion races the in-flight request.
+    await expect
+      .poll(async () => callsTo(await requests(page), '/data_for_device_and_path')[0]?.status, {
+        timeout: 20_000,
+      })
+      .toBe(200);
+
     const resolution = callsTo(await requests(page), '/data_for_device_and_path')[0];
-    expect(resolution?.status).toBe(200);
     expect(resolution?.body?.['path']).toBe(path);
     // The payload we attached when creating it comes back.
     expect(resolution?.response?.['data'], 'no payload returned for the link').toBeTruthy();
@@ -168,12 +176,14 @@ test.describe('live backend', () => {
     await page.getByRole('button', { name: '/checkout' }).click();
     await page.getByRole('button', { name: 'flush()' }).click();
 
+    // Requests are recorded before their responses arrive: poll the status.
     await expect
-      .poll(async () => callsTo(await requests(page), '/events/batch').length, { timeout: 20_000 })
-      .toBeGreaterThan(0);
+      .poll(async () => callsTo(await requests(page), '/events/batch').slice(-1)[0]?.status, {
+        timeout: 20_000,
+      })
+      .toBe(200);
 
     const batch = callsTo(await requests(page), '/events/batch').slice(-1)[0];
-    expect(batch?.status).toBe(200);
 
     // Spec B6: 200 does not mean accepted. A rejection here means the wire
     // contract has drifted, which is exactly what this suite is for.
@@ -191,11 +201,16 @@ test.describe('live backend', () => {
     await page.getByRole('button', { name: 'setUserIdentifier()' }).click();
     await page.getByRole('button', { name: 'setUserAttributes()' }).click();
 
+    // Poll until every recorded call has its response, not merely started.
     await expect
-      .poll(async () => callsTo(await requests(page), '/visitor_attributes').length, {
-        timeout: 20_000,
-      })
-      .toBeGreaterThan(0);
+      .poll(
+        async () => {
+          const calls = callsTo(await requests(page), '/visitor_attributes');
+          return calls.length > 0 && calls.every((c) => c.status !== undefined);
+        },
+        { timeout: 20_000 },
+      )
+      .toBe(true);
 
     for (const call of callsTo(await requests(page), '/visitor_attributes')) {
       expect(call.status).toBe(200);
@@ -209,11 +224,10 @@ test.describe('live backend', () => {
     await page.getByRole('button', { name: 'setScreenAliases()' }).click();
 
     await expect
-      .poll(async () => callsTo(await requests(page), '/screen_aliases').length, { timeout: 20_000 })
-      .toBeGreaterThan(0);
-
-    const sync = callsTo(await requests(page), '/screen_aliases')[0];
-    expect(sync?.status).toBe(200);
+      .poll(async () => callsTo(await requests(page), '/screen_aliases')[0]?.status, {
+        timeout: 20_000,
+      })
+      .toBe(200);
   });
 
   test('lists messages and reads the unread count', async ({ page }) => {
@@ -231,11 +245,10 @@ test.describe('live backend', () => {
 
     await page.getByRole('button', { name: 'showMessagesList()' }).click();
     await expect
-      .poll(async () => callsTo(await requests(page), '/notifications_for_device').length, {
+      .poll(async () => callsTo(await requests(page), '/notifications_for_device')[0]?.status, {
         timeout: 20_000,
       })
-      .toBeGreaterThan(0);
-    expect(callsTo(await requests(page), '/notifications_for_device')[0]?.status).toBe(200);
+      .toBe(200);
   });
 
   test('reports the Enterprise requirement for purchases, or accepts them', async ({ page }) => {
@@ -244,10 +257,10 @@ test.describe('live backend', () => {
 
     await page.getByRole('button', { name: 'logCustomPurchase()' }).click();
     await expect
-      .poll(async () => callsTo(await requests(page), '/add_payment_event').length, {
+      .poll(async () => callsTo(await requests(page), '/add_payment_event')[0]?.status, {
         timeout: 20_000,
       })
-      .toBeGreaterThan(0);
+      .toBeDefined();
 
     const purchase = callsTo(await requests(page), '/add_payment_event')[0];
 
@@ -284,8 +297,11 @@ test.describe('live backend', () => {
     await configure(page);
     const first = callsTo(await requests(page), '/authenticate')[0]?.response?.['linksquared'];
 
-    // Same browser context, so the identity cookie survives.
-    await page.goto('/demo/?second=visit');
+    // Same browser context, so the identity cookie survives. Reopen through
+    // openLive, not a bare goto: the fresh page resets the testEnvironment
+    // checkbox to its HTML default (checked), and a test-env configure targets
+    // the twin project — which issues a different visitor id.
+    await openLive(page, '?second=visit');
     await configure(page);
     const second = callsTo(await requests(page), '/authenticate')[0]?.response?.['linksquared'];
 

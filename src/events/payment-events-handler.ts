@@ -33,12 +33,14 @@ export class PaymentEventsHandler {
       return false;
     }
 
+    // Wire names match iOS's TransactionData.toData() and the backend's
+    // payment_event_params permit list: event_type / price_cents / date.
     const body: Record<string, unknown> = {
-      type: purchase.type,
-      price_in_cents: purchase.priceInCents,
+      event_type: purchase.type,
+      price_cents: purchase.priceInCents,
       currency: purchase.currency,
       product_id: purchase.productID,
-      start_date: (purchase.startDate ?? new Date()).toISOString(),
+      date: (purchase.startDate ?? new Date()).toISOString(),
     };
 
     const response = await this.client.service.addPaymentEvent(body);

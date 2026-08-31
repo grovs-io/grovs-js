@@ -1,5 +1,8 @@
 import Grovs from '../src/index.ts';
 
+// The live suite (and console poking) reaches the SDK through the page.
+window.Grovs = Grovs;
+
 const logEl = document.getElementById('log');
 const stAuth = document.getElementById('st-auth');
 const stId = document.getElementById('st-id');

@@ -194,19 +194,19 @@ describe('wire contract — request bodies', () => {
   it('POST /add_payment_event', async () => {
     const transport = new FakeTransport();
     await service(transport).addPaymentEvent({
-      type: 'buy',
-      price_in_cents: 1999,
+      event_type: 'buy',
+      price_cents: 1999,
       currency: 'USD',
       product_id: 'p-1',
-      start_date: '2026-01-01T00:00:00.000Z',
+      date: '2026-01-01T00:00:00.000Z',
     });
 
     expect(transport.last?.body).toEqual({
-      type: 'buy',
-      price_in_cents: 1999,
+      event_type: 'buy',
+      price_cents: 1999,
       currency: 'USD',
       product_id: 'p-1',
-      start_date: '2026-01-01T00:00:00.000Z',
+      date: '2026-01-01T00:00:00.000Z',
     });
   });
 
