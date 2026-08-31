@@ -1,6 +1,6 @@
 {
   "name": "grovs",
-  "version": "2.0.0-alpha.1",
+  "version": "2.0.0-alpha.2",
   "description": "Grovs generates dynamic links, tracks attributions, and analyzes referrals, seamlessly directing users to your app or the app store for downloads.",
   "type": "module",
   "main": "./dist/grovs.cjs",

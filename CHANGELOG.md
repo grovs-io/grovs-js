@@ -1,5 +1,24 @@
 # Changelog
 
+## 2.0.0-alpha.2
+
+### Added
+
+- The messages UI is redesigned (themed card, unread badge, skeleton loading,
+  empty state, keyboard and Escape support) and configurable via the new
+  `messagesTheme` option on `configure()` or `--grovs-*` CSS custom
+  properties. See "Styling the messages UI" in the README.
+
+### Fixed
+
+- Purchases and custom link redirects were sent under field names the backend
+  does not read, so both were silently dropped.
+- Message bodies rendered blank: the backend sends `access_url` without a
+  scheme and the URL guard rejected it.
+- Deep link attribution now also accepts the legacy `linksquared` query
+  parameter and case-mangled parameter names.
+- Messages pagination stalled when the first page did not overflow the list.
+
 ## 2.0.0-alpha.1
 
 A TypeScript rewrite bringing the JS SDK to behavioural parity with the iOS
