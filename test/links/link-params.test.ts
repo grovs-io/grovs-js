@@ -66,16 +66,33 @@ describe('createLink full parameter surface', () => {
     expect(body['tracking_medium']).toBe('social');
   });
 
-  it('snake-cases the custom redirect keys', async () => {
+  // One param per platform, {url, open_app_if_installed} — matching iOS's
+  // APIService and the backend's CustomRedirectsHandler, which reads only
+  // ios/android/desktop_custom_redirect and drops phone entries that omit
+  // open_app_if_installed.
+  it('sends one custom redirect param per platform in the backend shape', async () => {
     const transport = new FakeTransport();
     await api(transport).createLink({
-      customRedirects: { ios: { link: 'https://ios', openAppIfInstalled: true } },
+      customRedirects: {
+        ios: { link: 'https://ios', openAppIfInstalled: true },
+        android: { link: 'https://android' },
+        desktop: { link: 'https://web' },
+      },
     });
 
     const body = transport.last?.body as Record<string, string>;
-    expect(JSON.parse(body['custom_redirects'] ?? '{}')).toEqual({
-      ios: { link: 'https://ios', open_app_if_installed: true },
+    expect(JSON.parse(body['ios_custom_redirect'] ?? '{}')).toEqual({
+      url: 'https://ios',
+      open_app_if_installed: true,
     });
+    expect(JSON.parse(body['android_custom_redirect'] ?? '{}')).toEqual({
+      url: 'https://android',
+      open_app_if_installed: false,
+    });
+    expect(JSON.parse(body['desktop_custom_redirect'] ?? '{}')).toEqual({
+      url: 'https://web',
+    });
+    expect(body['custom_redirects']).toBeUndefined();
   });
 
   // `false` is a meaningful override; omitting it is not the same thing.

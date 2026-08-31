@@ -108,7 +108,7 @@ export class ApiService {
     if (params.data) body['data'] = JSON.stringify(params.data);
     if (params.tags && params.tags.length > 0) body['tags'] = JSON.stringify(params.tags);
     if (params.customRedirects) {
-      body['custom_redirects'] = JSON.stringify(serializeRedirects(params.customRedirects));
+      Object.assign(body, serializeRedirects(params.customRedirects));
     }
     if (typeof params.showPreviewiOS === 'boolean') body['show_preview_ios'] = params.showPreviewiOS;
     if (typeof params.showPreviewAndroid === 'boolean') {
@@ -195,18 +195,26 @@ export class ApiService {
   }
 }
 
-/** Snake-cases the redirect override keys the backend expects. */
+/**
+ * One JSON-string param per platform — ios_custom_redirect /
+ * android_custom_redirect / desktop_custom_redirect, each {url,
+ * open_app_if_installed} — matching iOS's APIService and the backend's
+ * CustomRedirectsHandler, which reads exactly those keys and (for phone
+ * platforms) rejects an entry missing open_app_if_installed.
+ */
 function serializeRedirects(redirects: CustomRedirects): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const platform of ['ios', 'android', 'desktop'] as const) {
     const entry = redirects[platform];
-    if (!entry) continue;
-    const serialized: Record<string, unknown> = {};
-    if (entry.link) serialized['link'] = entry.link;
-    if ('openAppIfInstalled' in entry && typeof entry.openAppIfInstalled === 'boolean') {
-      serialized['open_app_if_installed'] = entry.openAppIfInstalled;
+    if (!entry?.link) continue;
+    const serialized: Record<string, unknown> = { url: entry.link };
+    if (platform !== 'desktop') {
+      serialized['open_app_if_installed'] =
+        'openAppIfInstalled' in entry && typeof entry.openAppIfInstalled === 'boolean'
+          ? entry.openAppIfInstalled
+          : false;
     }
-    if (Object.keys(serialized).length > 0) out[platform] = serialized;
+    out[`${platform}_custom_redirect`] = JSON.stringify(serialized);
   }
   return out;
 }

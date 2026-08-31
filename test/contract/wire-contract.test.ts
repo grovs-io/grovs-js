@@ -96,7 +96,7 @@ describe('wire contract — request bodies', () => {
       image_url: 'https://img',
       data: '{"k":"v"}',
       tags: '["a"]',
-      custom_redirects: '{"ios":{"link":"https://ios","open_app_if_installed":true}}',
+      ios_custom_redirect: '{"url":"https://ios","open_app_if_installed":true}',
       show_preview_ios: false,
       show_preview_android: true,
       tracking_campaign: 'C',
