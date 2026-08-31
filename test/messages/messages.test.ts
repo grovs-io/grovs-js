@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MessagesService } from '../../src/messages/messages';
 import { MessagesUI } from '../../src/messages/messages-ui';
+import type { MessagesTheme } from '../../src/messages/messages-theme';
 import { GrovsClient } from '../../src/core/client';
 import { Logger } from '../../src/logging/logger';
 import { FakeTransport } from '../helpers/fake-transport';
@@ -103,8 +104,8 @@ describe('MessagesUI', () => {
     document.body.innerHTML = '';
   });
 
-  function makeUI(client: GrovsClient) {
-    return new MessagesUI(document, new MessagesService(client), new Logger());
+  function makeUI(client: GrovsClient, theme?: MessagesTheme) {
+    return new MessagesUI(document, new MessagesService(client), new Logger(), theme);
   }
 
   it('mounts a modal into the document', async () => {
@@ -159,23 +160,76 @@ describe('MessagesUI', () => {
     );
   });
 
-  // Defect nine: grovs_ui_helper.js:240 painted the overlay red one line after
-  // setting the intended translucent black.
-  it('renders a translucent backdrop, not red', async () => {
+  // Defect nine's descendant: v1 painted the overlay red one line after
+  // setting the intended translucent black. Styling now lives in a shadow
+  // stylesheet driven by tokens, so the pin moves there.
+  it('themes via a stylesheet, not a red debug background', async () => {
     const transport = new FakeTransport();
     const client = await authedClient(transport);
+    transport.enqueue({ ok: true, status: 200, body: { notifications: [] } });
 
-    makeUI(client).openPage({
-      id: 1,
-      title: 'T',
-      subtitle: '',
-      read: false,
-      access_url: 'https://x.com',
+    await makeUI(client).showMessagesList();
+    const root = shadow()!;
+    const css = root.querySelector('style')!.textContent!;
+    expect(css).toContain('--grovs-backdrop');
+    // "red" alone would trip on "prefers-reduced-motion"; the v1 defect was a
+    // literal red background.
+    expect(css).not.toMatch(/background:\s*red/);
+    expect(root.querySelector('.grovs-backdrop')).not.toBeNull();
+    expect(root.querySelector('.grovs-card')).not.toBeNull();
+  });
+
+  it('shows the unread count in the header badge', async () => {
+    const transport = new FakeTransport();
+    const client = await authedClient(transport);
+    transport.enqueue({
+      ok: true,
+      status: 200,
+      body: {
+        notifications: [
+          { id: 1, title: 'a', subtitle: '', read: false, access_url: 'https://x.com' },
+          { id: 2, title: 'b', subtitle: '', read: true, access_url: 'https://x.com' },
+          { id: 3, title: 'c', subtitle: '', read: false, access_url: 'https://x.com' },
+        ],
+      },
     });
 
-    const overlay = document.getElementById('Grovs-page-modal-1');
-    expect(overlay?.style.backgroundColor).toBe('rgba(0, 0, 0, 0.5)');
-    expect(overlay?.style.background).not.toContain('red');
+    await makeUI(client).showMessagesList();
+    const badge = shadow()!.querySelector('.grovs-badge')!;
+    expect(badge.textContent).toBe('2');
+    expect(badge.getAttribute('data-count')).toBe('2');
+  });
+
+  it('marks the row read and decrements the badge when a message opens', async () => {
+    const transport = new FakeTransport();
+    const client = await authedClient(transport);
+    transport.enqueue({
+      ok: true,
+      status: 200,
+      body: {
+        notifications: [
+          { id: 1, title: 'a', subtitle: '', read: false, access_url: 'https://x.com' },
+        ],
+      },
+    });
+
+    await makeUI(client).showMessagesList();
+    (shadow()!.querySelector('.grovs-item') as HTMLElement).click();
+    expect(shadow()!.querySelector('.grovs-item')!.getAttribute('data-read')).toBe('true');
+    expect(shadow()!.querySelector('.grovs-badge')!.getAttribute('data-count')).toBe('0');
+  });
+
+  it('applies forced mode and position as host data attributes', async () => {
+    const transport = new FakeTransport();
+    const client = await authedClient(transport);
+    transport.enqueue({ ok: true, status: 200, body: { notifications: [] } });
+
+    await makeUI(client, { mode: 'dark', position: 'right' }).showMessagesList();
+    const host = document.getElementById('Grovs-modal')!;
+    expect(host.getAttribute('data-grovs-mode')).toBe('dark');
+    expect(host.getAttribute('data-grovs-position')).toBe('right');
+    const css = host.shadowRoot!.querySelector('style')!.textContent!;
+    expect(css).toContain(':host([data-grovs-mode="dark"])');
   });
 
   it('removes the modal on close', async () => {
