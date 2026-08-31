@@ -1,4 +1,5 @@
 import type { ErrorCallback, LogLevel } from '../logging/logger';
+import type { MessagesTheme } from '../messages/messages-theme';
 import { SDK_VERSION } from '../version';
 
 export type DeeplinkCallback = (payload: Record<string, unknown>) => void;
@@ -27,6 +28,8 @@ export interface GrovsConfig {
    *  the SDK version, since a web page has no build number of its own. */
   appVersion?: string;
   debugLevel?: LogLevel;
+  /** Styling for the built-in messages UI. See MessagesTheme. */
+  messagesTheme?: MessagesTheme;
   onDeeplink?: DeeplinkCallback;
   onError?: ErrorCallback;
 }

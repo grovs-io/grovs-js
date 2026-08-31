@@ -3,6 +3,7 @@ import type { GrovsConfig } from './core/config';
 import { LinkGenerator } from './links/links';
 import { MessagesService, type GrovsMessage } from './messages/messages';
 import { MessagesUI } from './messages/messages-ui';
+import type { MessagesTheme } from './messages/messages-theme';
 import { getDocument } from './core/environment';
 import { Logger, type LogLevel } from './logging/logger';
 import type { CreateLinkParams } from './net/api';
@@ -14,6 +15,7 @@ let client: GrovsClient | null = null;
 let links: LinkGenerator | null = null;
 let messages: MessagesService | null = null;
 let ui: MessagesUI | null = null;
+let messagesTheme: MessagesTheme | undefined;
 
 const fallbackLogger = new Logger();
 
@@ -24,7 +26,7 @@ function notConfigured(method: string): void {
 function messagesUI(): MessagesUI | null {
   const doc = getDocument();
   if (!doc || !messages || !client) return null;
-  ui ??= new MessagesUI(doc, messages, client.log);
+  ui ??= new MessagesUI(doc, messages, client.log, messagesTheme);
   return ui;
 }
 
@@ -49,6 +51,7 @@ const facade = {
     links = new LinkGenerator(client);
     messages = new MessagesService(client);
     ui = null;
+    messagesTheme = config.messagesTheme;
     // Automatic display needs the DOM surface, which lives here.
     client.messagesUI = messagesUI;
     return client.configure();
@@ -264,6 +267,7 @@ export { SDK_VERSION };
 export type { GrovsConfig, DeeplinkCallback } from './core/config';
 export type { LogLevel, ErrorCallback } from './logging/logger';
 export type { GrovsMessage } from './messages/messages';
+export type { MessagesTheme } from './messages/messages-theme';
 export type { CreateLinkParams } from './net/api';
 export type { ScreenNameProvider, ScreenNameDecision } from './tracking/auto-screen-tracker';
 export type { CustomRedirects } from './net/api';

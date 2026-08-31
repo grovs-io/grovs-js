@@ -160,9 +160,7 @@ describe('MessagesUI', () => {
     );
   });
 
-  // Defect nine's descendant: v1 painted the overlay red one line after
-  // setting the intended translucent black. Styling now lives in a shadow
-  // stylesheet driven by tokens, so the pin moves there.
+  // v1 once painted the overlay debug-red; the pin moved into the stylesheet.
   it('themes via a stylesheet, not a red debug background', async () => {
     const transport = new FakeTransport();
     const client = await authedClient(transport);
@@ -172,8 +170,6 @@ describe('MessagesUI', () => {
     const root = shadow()!;
     const css = root.querySelector('style')!.textContent!;
     expect(css).toContain('--grovs-backdrop');
-    // "red" alone would trip on "prefers-reduced-motion"; the v1 defect was a
-    // literal red background.
     expect(css).not.toMatch(/background:\s*red/);
     expect(root.querySelector('.grovs-backdrop')).not.toBeNull();
     expect(root.querySelector('.grovs-card')).not.toBeNull();
@@ -194,10 +190,13 @@ describe('MessagesUI', () => {
       },
     });
 
+    // The count is server-sourced, not derived from the rendered pages.
+    transport.enqueue({ ok: true, status: 200, body: { number_of_unread_notifications: 12 } });
+
     await makeUI(client).showMessagesList();
     const badge = shadow()!.querySelector('.grovs-badge')!;
-    expect(badge.textContent).toBe('2');
-    expect(badge.getAttribute('data-count')).toBe('2');
+    expect(badge.textContent).toBe('12');
+    expect(badge.getAttribute('data-count')).toBe('12');
   });
 
   it('marks the row read and decrements the badge when a message opens', async () => {
@@ -212,11 +211,21 @@ describe('MessagesUI', () => {
         ],
       },
     });
+    transport.enqueue({ ok: true, status: 200, body: { number_of_unread_notifications: 1 } });
 
     await makeUI(client).showMessagesList();
     (shadow()!.querySelector('.grovs-item') as HTMLElement).click();
     expect(shadow()!.querySelector('.grovs-item')!.getAttribute('data-read')).toBe('true');
     expect(shadow()!.querySelector('.grovs-badge')!.getAttribute('data-count')).toBe('0');
+  });
+
+  it('renders a configured list title', async () => {
+    const transport = new FakeTransport();
+    const client = await authedClient(transport);
+    transport.enqueue({ ok: true, status: 200, body: { notifications: [] } });
+
+    await makeUI(client, { title: 'Inbox' }).showMessagesList();
+    expect(shadow()!.querySelector('.grovs-heading')!.textContent).toBe('Inbox');
   });
 
   it('applies forced mode and position as host data attributes', async () => {
@@ -313,6 +322,214 @@ describe('MessagesUI', () => {
     expect(frame.getAttribute('sandbox')).toBe('allow-scripts allow-popups allow-forms');
     expect(frame.getAttribute('referrerpolicy')).toBe('no-referrer');
     expect(frame.src).toBe('https://msg.example/x');
+  });
+
+  // Notification#access_url arrives scheme-less; without the prepend every body is blank.
+  it('prepends https:// to a scheme-less access_url like iOS does', async () => {
+    const transport = new FakeTransport();
+    const client = await authedClient(transport);
+
+    makeUI(client).openPage({
+      id: 9,
+      title: 'T',
+      subtitle: '',
+      read: false,
+      access_url: 'test1df3.sqd.link/mm/n0aFYv',
+    });
+
+    const frame = document
+      .getElementById('Grovs-page-modal-9')!
+      .shadowRoot!.querySelector('iframe')!;
+    expect(frame.src).toBe('https://test1df3.sqd.link/mm/n0aFYv');
+  });
+
+  it('resolves safeUrl edge cases without ever reaching the customer origin', async () => {
+    const transport = new FakeTransport();
+    const client = await authedClient(transport);
+    const ui = makeUI(client);
+
+    const frameSrc = (id: number, accessUrl: string) => {
+      ui.openPage({ id, title: 'T', subtitle: '', read: false, access_url: accessUrl });
+      return document.getElementById(`Grovs-page-modal-${id}`)!.shadowRoot!.querySelector('iframe')!
+        .src;
+    };
+
+    expect(frameSrc(20, 'httpbin.org/x')).toBe('https://httpbin.org/x');
+    expect(frameSrc(21, 'HTTP://example.com/p')).toBe('http://example.com/p');
+    expect(frameSrc(22, '//evil.example/x')).toBe('https://evil.example/x');
+    expect(frameSrc(23, '/relative/path')).toBe('https://relative/path');
+    expect(frameSrc(24, 'data:text/html,<script>1</script>')).toBe('about:blank');
+    expect(frameSrc(25, 'javascript:alert(1)')).toBe('about:blank');
+  });
+
+  // jsdom has no layout, so list geometry is spied where auto-fill must run.
+  async function withGeometry(scrollHeight: number, clientHeight: number, fn: () => Promise<void>) {
+    const scrollSpy = vi
+      .spyOn(HTMLElement.prototype, 'scrollHeight', 'get')
+      .mockReturnValue(scrollHeight);
+    const clientSpy = vi
+      .spyOn(HTMLElement.prototype, 'clientHeight', 'get')
+      .mockReturnValue(clientHeight);
+    try {
+      await fn();
+    } finally {
+      scrollSpy.mockRestore();
+      clientSpy.mockRestore();
+    }
+  }
+
+  const notificationPage = (ids: number[], read = false) => ({
+    ok: true,
+    status: 200,
+    body: {
+      notifications: ids.map((id) => ({
+        id,
+        title: `m${id}`,
+        subtitle: '',
+        read,
+        access_url: 'https://x.com',
+      })),
+    },
+  });
+
+  it('stops auto-filling once the list actually overflows', async () => {
+    await withGeometry(500, 100, async () => {
+      const transport = new FakeTransport();
+      const client = await authedClient(transport);
+      transport.enqueue(notificationPage([1]));
+
+      await makeUI(client).showMessagesList();
+      expect(transport.requestsTo('/notifications_for_device')).toHaveLength(1);
+    });
+  });
+
+  it('does not auto-fill before the list has layout', async () => {
+    const transport = new FakeTransport();
+    const client = await authedClient(transport);
+    transport.enqueue(notificationPage([1]));
+    transport.enqueue(notificationPage([2]));
+
+    await makeUI(client).showMessagesList();
+    expect(transport.requestsTo('/notifications_for_device')).toHaveLength(1);
+  });
+
+  it('auto-loads pages until the backend runs out when the list cannot scroll', async () => {
+    await withGeometry(50, 100, async () => {
+      const transport = new FakeTransport();
+      const client = await authedClient(transport);
+      transport.enqueue(notificationPage([1, 2]));
+      transport.enqueue(notificationPage([3]));
+      transport.enqueue(notificationPage([]));
+
+      await makeUI(client).showMessagesList();
+      expect(shadow()!.querySelectorAll('.grovs-item')).toHaveLength(3);
+      expect(transport.requestsTo('/notifications_for_device')).toHaveLength(3);
+    });
+  });
+
+  it('loads the next page on scroll', async () => {
+    await withGeometry(500, 100, async () => {
+      const transport = new FakeTransport();
+      const client = await authedClient(transport);
+      transport.enqueue(notificationPage([1]));
+
+      await makeUI(client).showMessagesList();
+      expect(transport.requestsTo('/notifications_for_device')).toHaveLength(1);
+
+      transport.enqueue(notificationPage([2]));
+      const list = shadow()!.querySelector('.grovs-item-list') as HTMLElement;
+      list.scrollTop = 300;
+      list.dispatchEvent(new Event('scroll'));
+
+      await vi.waitFor(() =>
+        expect(shadow()!.querySelectorAll('.grovs-item')).toHaveLength(2),
+      );
+      expect(transport.requestsTo('/notifications_for_device')).toHaveLength(2);
+    });
+  });
+
+  it('closes on Escape', async () => {
+    const transport = new FakeTransport();
+    const client = await authedClient(transport);
+    transport.enqueue(notificationPage([]));
+
+    await makeUI(client).showMessagesList();
+    expect(document.getElementById('Grovs-modal')).not.toBeNull();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(document.getElementById('Grovs-modal')).toBeNull();
+  });
+
+  it('Escape dismisses the topmost detail modal before the list', async () => {
+    const transport = new FakeTransport();
+    const client = await authedClient(transport);
+    transport.enqueue(notificationPage([1]));
+
+    const ui = makeUI(client);
+    await ui.showMessagesList();
+    ui.openPage({ id: 5, title: 'T', subtitle: '', read: false, access_url: 'https://x.com' });
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(document.getElementById('Grovs-page-modal-5')).toBeNull();
+    expect(document.getElementById('Grovs-modal')).not.toBeNull();
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(document.getElementById('Grovs-modal')).toBeNull();
+  });
+
+  it('keeps the per-row tally when the unread request fails', async () => {
+    const transport = new FakeTransport();
+    const client = await authedClient(transport);
+    transport.enqueue(notificationPage([1, 2]));
+    transport.enqueueStatus(500);
+
+    await makeUI(client).showMessagesList();
+    expect(shadow()!.querySelector('.grovs-badge')!.getAttribute('data-count')).toBe('2');
+  });
+
+  it('removes the keydown listener when the last detail modal closes', async () => {
+    const transport = new FakeTransport();
+    const client = await authedClient(transport);
+    const adds = vi.spyOn(document, 'addEventListener');
+    const removes = vi.spyOn(document, 'removeEventListener');
+    try {
+      const ui = makeUI(client);
+      ui.openPage({ id: 3, title: 'T', subtitle: '', read: false, access_url: 'https://x.com' });
+      (document
+        .getElementById('Grovs-page-modal-3')!
+        .shadowRoot!.querySelector('.grovs-close') as HTMLElement).click();
+
+      const keydownAdds = adds.mock.calls.filter(([type]) => type === 'keydown').length;
+      const keydownRemoves = removes.mock.calls.filter(([type]) => type === 'keydown').length;
+      expect(keydownAdds).toBe(keydownRemoves);
+    } finally {
+      adds.mockRestore();
+      removes.mockRestore();
+    }
+  });
+
+  it('opens a row with the keyboard', async () => {
+    const transport = new FakeTransport();
+    const client = await authedClient(transport);
+    transport.enqueue(notificationPage([7]));
+
+    await makeUI(client).showMessagesList();
+    const row = shadow()!.querySelector('.grovs-item') as HTMLElement;
+    expect(row.getAttribute('role')).toBe('button');
+    row.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    expect(document.getElementById('Grovs-page-modal-7')).not.toBeNull();
+  });
+
+  it('treats a page of already-rendered messages as exhaustion, not a loop', async () => {
+    await withGeometry(50, 100, async () => {
+      const transport = new FakeTransport();
+      const client = await authedClient(transport);
+      transport.enqueue(notificationPage([1, 2]));
+      transport.enqueue(notificationPage([1, 2]));
+
+      await makeUI(client).showMessagesList();
+      expect(shadow()!.querySelectorAll('.grovs-item')).toHaveLength(2);
+      expect(transport.requestsTo('/notifications_for_device')).toHaveLength(2);
+    });
   });
 
   it('marks a message read when its page is opened', async () => {

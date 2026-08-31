@@ -1,15 +1,13 @@
 /**
- * Theming for the messages UI (spec 2026-08-31-messages-ui-theme-design).
- *
- * Precedence is page CSS > config > built-in: the palette and any config
- * overrides both live in the shadow stylesheet's :host rule (overrides
- * emitted last), and host-document rules targeting the host element outrank
- * :host rules in the cascade — so a designer's stylesheet always wins.
+ * Theming for the messages UI. Precedence is page CSS > config > built-in:
+ * everything lives in the shadow :host rule, which host-document rules outrank.
  */
 
 export interface MessagesTheme {
   mode?: 'auto' | 'light' | 'dark';
   position?: 'center' | 'right';
+  /** Header text of the list view — also the localization hook. */
+  title?: string;
   accentColor?: string;
   backgroundColor?: string;
   textColor?: string;
@@ -23,19 +21,21 @@ export interface MessagesTheme {
 export interface ResolvedMessagesTheme {
   mode: 'auto' | 'light' | 'dark';
   position: 'center' | 'right';
+  title: string;
   /** Custom-property name → value, only for tokens the integrator set. */
   overrides: Record<string, string>;
 }
 
-const TOKEN_PROPERTIES: ReadonlyArray<[keyof MessagesTheme, string]> = [
-  ['accentColor', '--grovs-accent'],
-  ['backgroundColor', '--grovs-bg'],
-  ['textColor', '--grovs-text'],
-  ['mutedTextColor', '--grovs-muted'],
-  ['borderRadius', '--grovs-radius'],
-  ['fontFamily', '--grovs-font'],
-  ['backdropColor', '--grovs-backdrop'],
-  ['zIndex', '--grovs-z'],
+/** [config token, custom property, plain property used to validate values] */
+const TOKEN_PROPERTIES: ReadonlyArray<[keyof MessagesTheme, string, string]> = [
+  ['accentColor', '--grovs-accent', 'color'],
+  ['backgroundColor', '--grovs-bg', 'background-color'],
+  ['textColor', '--grovs-text', 'color'],
+  ['mutedTextColor', '--grovs-muted', 'color'],
+  ['borderRadius', '--grovs-radius', 'border-radius'],
+  ['fontFamily', '--grovs-font', 'font-family'],
+  ['backdropColor', '--grovs-backdrop', 'color'],
+  ['zIndex', '--grovs-z', 'z-index'],
 ];
 
 const MODES = ['auto', 'light', 'dark'] as const;
@@ -61,15 +61,30 @@ export function resolveTheme(
     }
   }
 
+  const title =
+    typeof theme.title === 'string' && theme.title.trim() !== '' ? theme.title : 'Messages';
+
   const overrides: Record<string, string> = {};
-  for (const [token, property] of TOKEN_PROPERTIES) {
+  for (const [token, property, probe] of TOKEN_PROPERTIES) {
     const value = theme[token];
-    if (value !== undefined && value !== null && value !== '') {
-      overrides[property] = String(value);
+    if (value === undefined || value === null || value === '') continue;
+    const text = String(value);
+    // Interpolated into the stylesheet; delimiters smuggle rules, '/*' eats the rest of it.
+    if (/[;{}]|\/\*/.test(text)) {
+      warn(`messagesTheme.${token} contains CSS delimiters and was ignored.`);
+      continue;
     }
+    // An unparseable value would void the property at computed-value time (e.g.
+    // z-index: auto puts the modal behind the page), breaking the documented
+    // "a theme never breaks the modal" guarantee.
+    if (typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && !CSS.supports(probe, text)) {
+      warn(`messagesTheme.${token} value "${text}" is not valid CSS and was ignored.`);
+      continue;
+    }
+    overrides[property] = text;
   }
 
-  return { mode, position, overrides };
+  return { mode, position, title, overrides };
 }
 
 export function hostDataAttributes(theme: ResolvedMessagesTheme): Record<string, string> {
@@ -96,22 +111,19 @@ const DARK = `
 `;
 
 const SHARED = `
-  --grovs-radius: 16px;
+  --grovs-radius: 12px;
   --grovs-font: system-ui, -apple-system, sans-serif;
   --grovs-z: 1000;
   --grovs-hairline: color-mix(in srgb, var(--grovs-text) 12%, transparent);
   --grovs-hover: color-mix(in srgb, var(--grovs-text) 7%, transparent);
 `;
 
-export function buildStylesheet(
-  theme: ResolvedMessagesTheme,
-  hostSelector = ':host',
-): string {
+export function buildStylesheet(theme: ResolvedMessagesTheme): string {
   const overrideLines = Object.entries(theme.overrides)
     .map(([property, value]) => `  ${property}: ${value};`)
     .join('\n');
 
-  const css = `
+  return `
 :host { ${LIGHT} ${SHARED} }
 @media (prefers-color-scheme: dark) {
   :host(:not([data-grovs-mode="light"])) { ${DARK} }
@@ -121,6 +133,7 @@ export function buildStylesheet(
 ${overrideLines}
 }
 
+.grovs-backdrop, .grovs-backdrop * { box-sizing: border-box; }
 .grovs-backdrop {
   position: fixed; inset: 0;
   z-index: var(--grovs-z);
@@ -132,9 +145,10 @@ ${overrideLines}
 .grovs-card {
   background: var(--grovs-bg);
   border-radius: var(--grovs-radius);
-  box-shadow: 0 12px 40px rgba(0,0,0,.22);
+  border: 1px solid var(--grovs-hairline);
+  box-shadow: 0 8px 30px rgba(0,0,0,.18);
   width: min(420px, calc(100vw - 32px));
-  max-height: 70vh;
+  height: min(560px, 70vh);
   display: flex; flex-direction: column;
   overflow: hidden;
   animation: grovs-in 150ms ease-out;
@@ -142,16 +156,15 @@ ${overrideLines}
 .grovs-detail-card {
   width: min(720px, calc(100vw - 32px));
   height: min(80vh, 900px);
-  max-height: none;
 }
 :host([data-grovs-position="right"]) .grovs-backdrop { justify-content: flex-end; align-items: stretch; }
 :host([data-grovs-position="right"]) .grovs-card {
-  height: 100%; max-height: none; border-radius: 0; width: min(400px, 100vw);
+  height: 100%; border-radius: 0; border: none; width: min(400px, 100vw);
 }
 @keyframes grovs-in { from { opacity: 0; transform: scale(.97); } to { opacity: 1; transform: scale(1); } }
 @media (prefers-reduced-motion: reduce) { .grovs-card { animation: none; } }
 @media (max-width: 480px) {
-  .grovs-card, .grovs-detail-card { width: 100vw; height: 100dvh; max-height: none; border-radius: 0; }
+  .grovs-card, .grovs-detail-card { width: 100vw; height: 100dvh; border-radius: 0; border: none; }
 }
 
 .grovs-header {
@@ -170,7 +183,7 @@ ${overrideLines}
 .grovs-badge[data-count="0"] { display: none; }
 .grovs-close {
   background: transparent; border: none; color: var(--grovs-muted);
-  cursor: pointer; font-size: 16px; padding: 4px 6px; border-radius: 6px;
+  cursor: pointer; font-size: 16px; padding: 4px 6px; border-radius: 4px;
 }
 .grovs-close:hover { background: var(--grovs-hover); color: var(--grovs-text); }
 .grovs-close:focus-visible { outline: 2px solid var(--grovs-accent); }
@@ -183,6 +196,7 @@ ${overrideLines}
   cursor: pointer;
 }
 .grovs-item:hover { background: var(--grovs-hover); }
+.grovs-item:focus-visible { outline: 2px solid var(--grovs-accent); outline-offset: -2px; }
 .grovs-dot {
   width: 8px; height: 8px; border-radius: 50%;
   background: var(--grovs-accent);
@@ -203,7 +217,7 @@ ${overrideLines}
 
 .grovs-skeleton { padding: 14px 16px; border-bottom: 1px solid var(--grovs-hairline); }
 .grovs-skeleton div {
-  height: 12px; border-radius: 6px; background: var(--grovs-hover);
+  height: 12px; border-radius: 4px; background: var(--grovs-hover);
   animation: grovs-pulse 1.2s ease-in-out infinite;
 }
 .grovs-skeleton div + div { margin-top: 8px; width: 60%; }
@@ -212,11 +226,4 @@ ${overrideLines}
 
 .grovs-frame { width: 100%; flex: 1; border: none; }
 `;
-
-  if (hostSelector === ':host') return css;
-  // No-shadow fallback: `:host(...)` carries its argument as an attached
-  // selector; bare `:host` becomes the host selector itself.
-  return css
-    .replace(/:host\(([^)]*)\)/g, `${hostSelector}$1`)
-    .replace(/:host/g, hostSelector);
 }

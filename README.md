@@ -248,6 +248,49 @@ Messages flagged for automatic display in the console open on their own; call
 UI renders inside a shadow root, so it neither inherits your CSS nor leaks its
 own.
 
+### Styling the messages UI
+
+The built-in list and detail views take a theme, from JavaScript or from CSS:
+
+```ts
+Grovs.configure({
+  apiKey: '…',
+  messagesTheme: {
+    mode: 'auto',            // 'light' | 'dark' | 'auto'
+    position: 'center',      // or 'right' for a side sheet
+    title: 'Inbox',          // list header text (localization hook)
+    accentColor: '#e91e63',
+    borderRadius: '12px',
+  },
+});
+```
+
+```css
+/* or from CSS alone — this wins over the config object.
+   Target both hosts: the list modal and the per-message detail modals. */
+#Grovs-modal, .grovs-page-modal { --grovs-accent: #e91e63; --grovs-radius: 12px; }
+```
+
+Page CSS beats the config object, which beats the built-in defaults — set a
+`--grovs-*` property on the host elements in your stylesheet to override
+everything.
+
+| Theme token | CSS property | Light default | Dark default |
+| --- | --- | --- | --- |
+| `accentColor` | `--grovs-accent` | `#2563eb` | `#60a5fa` |
+| `backgroundColor` | `--grovs-bg` | `#ffffff` | `#1c1f24` |
+| `textColor` | `--grovs-text` | `#1a1d21` | `#e7e9ec` |
+| `mutedTextColor` | `--grovs-muted` | `#6b7280` | `#9aa2ad` |
+| `borderRadius` | `--grovs-radius` | `12px` | `12px` |
+| `fontFamily` | `--grovs-font` | system-ui stack | system-ui stack |
+| `backdropColor` | `--grovs-backdrop` | `rgba(0,0,0,.45)` | `rgba(0,0,0,.6)` |
+| `zIndex` | `--grovs-z` | `1000` | `1000` |
+
+`mode: 'auto'` follows `prefers-color-scheme`. Invalid values never break the
+modal: values that are not valid CSS (or that contain CSS delimiters) are
+rejected at `configure()` time with a warning and the defaults hold, and an
+invalid `mode`/`position` falls back with a warning.
+
 ## Purchases
 
 ```javascript

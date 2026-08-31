@@ -41,6 +41,12 @@ describe('resolveTheme', () => {
     expect(Object.keys(t.overrides)).toEqual(['--grovs-accent']);
   });
 
+  it('defaults the title and accepts a custom one, rejecting blank', () => {
+    expect(resolveTheme().title).toBe('Messages');
+    expect(resolveTheme({ title: 'Inbox' }).title).toBe('Inbox');
+    expect(resolveTheme({ title: '   ' }).title).toBe('Messages');
+  });
+
   it('accepts valid mode and position', () => {
     const t = resolveTheme({ mode: 'dark', position: 'right' });
     expect(t.mode).toBe('dark');
@@ -56,6 +62,28 @@ describe('resolveTheme', () => {
     expect(t.mode).toBe('auto');
     expect(t.position).toBe('center');
     expect(warn).toHaveBeenCalledTimes(2);
+  });
+
+  it('drops token values carrying CSS delimiters or comments, with a warning', () => {
+    const warn = vi.fn();
+    const t = resolveTheme(
+      { accentColor: 'red;} :host{display:none', backdropColor: 'red /*', textColor: '#fff' },
+      warn,
+    );
+    expect(t.overrides).toEqual({ '--grovs-text': '#fff' });
+    expect(warn).toHaveBeenCalledTimes(2);
+  });
+
+  it('drops values CSS.supports rejects, with a warning', () => {
+    vi.stubGlobal('CSS', { supports: (_p: string, v: string) => v !== 'notacolor' && v !== 'abc' });
+    try {
+      const warn = vi.fn();
+      const t = resolveTheme({ accentColor: 'notacolor', zIndex: 'abc' as never, textColor: '#fff' }, warn);
+      expect(t.overrides).toEqual({ '--grovs-text': '#fff' });
+      expect(warn).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('never throws, even on garbage input', () => {
@@ -102,13 +130,4 @@ describe('buildStylesheet', () => {
     expect(buildStylesheet(resolveTheme())).toContain('@media (prefers-reduced-motion: reduce)');
   });
 
-  // Spec: when attachShadow is unavailable the sheet is namespaced under the
-  // host id instead — :host and :host([...]) both rewrite.
-  it('rewrites host selectors for the no-shadow fallback', () => {
-    const css = buildStylesheet(resolveTheme(), '#Grovs-modal');
-    expect(css).not.toContain(':host');
-    expect(css).toContain('#Grovs-modal {');
-    expect(css).toContain('#Grovs-modal[data-grovs-mode="dark"]');
-    expect(css).toContain('#Grovs-modal[data-grovs-position="right"] .grovs-card');
-  });
 });

@@ -13,16 +13,18 @@ const PAGE_MODAL_ID = 'Grovs-page-modal';
 const PAGE_MODAL_CLASS = 'grovs-page-modal';
 
 /**
- * Refuses anything that is not an absolute http(s) URL.
- *
- * No base is supplied, so a relative value fails to parse rather than
- * resolving against the customer's own origin — which would let notification
- * content frame the embedding site.
+ * Absolute http(s) URLs only. Notification#access_url arrives scheme-less
+ * and iOS prepends https:// (MessageDetailsViewController.swift:66), so the
+ * same happens here. A non-http(s) scheme either fails to parse or
+ * re-anchors to a remote host — never the embedding origin.
  */
 function safeUrl(url: string): string {
+  const candidate = /^https?:\/\//i.test(url) ? url : `https://${url}`;
   try {
-    const parsed = new URL(url);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? url : 'about:blank';
+    const parsed = new URL(candidate);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+      ? parsed.href
+      : 'about:blank';
   } catch {
     return 'about:blank';
   }
@@ -59,6 +61,9 @@ export class MessagesUI {
   private readonly ownModals = new Set<HTMLElement>();
   private unread = 0;
   private badge: HTMLElement | null = null;
+  /** A repeated page reads as exhaustion instead of looping the auto-fill. */
+  private readonly renderedIds = new Set<number>();
+  private escListener: ((event: KeyboardEvent) => void) | null = null;
   private readonly theme: ResolvedMessagesTheme;
 
   constructor(
@@ -70,21 +75,39 @@ export class MessagesUI {
     this.theme = resolveTheme(theme, (message) => this.logger.warn(message));
   }
 
-  /** Shadow root (or host fallback) with the theme stylesheet installed. */
-  private themedRoot(host: HTMLElement): ShadowRoot | HTMLElement {
+  /** Shadow root with the theme stylesheet installed. */
+  private themedRoot(host: HTMLElement): ShadowRoot {
     for (const [name, value] of Object.entries(hostDataAttributes(this.theme))) {
       host.setAttribute(name, value);
     }
-    const shadow = Boolean(host.attachShadow);
-    const root: ShadowRoot | HTMLElement = shadow
-      ? host.attachShadow({ mode: 'open' })
-      : host;
+    const root = host.attachShadow({ mode: 'open' });
     const style = this.doc.createElement('style');
-    // No shadow root (ancient embedder): namespace under the host id and
-    // accept minor host-CSS bleed, exactly as the old inline styles did.
-    style.textContent = buildStylesheet(this.theme, shadow ? ':host' : `#${host.id}`);
+    style.textContent = buildStylesheet(this.theme);
     root.appendChild(style);
     return root;
+  }
+
+  private ensureEscListener(): void {
+    if (this.escListener) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      const top = [...this.ownModals].pop();
+      if (top) {
+        top.remove();
+        this.ownModals.delete(top);
+        this.releaseEscListenerIfIdle();
+        return;
+      }
+      this.close();
+    };
+    this.doc.addEventListener('keydown', onKey);
+    this.escListener = onKey;
+  }
+
+  private releaseEscListenerIfIdle(): void {
+    if (this.host || this.ownModals.size > 0 || !this.escListener) return;
+    this.doc.removeEventListener('keydown', this.escListener);
+    this.escListener = null;
   }
 
   private closeButton(onClose: () => void): HTMLElement {
@@ -111,21 +134,25 @@ export class MessagesUI {
 
     const card = this.doc.createElement('div');
     card.className = 'grovs-card';
+    card.setAttribute('role', 'dialog');
+    card.setAttribute('aria-modal', 'true');
+    card.setAttribute('aria-label', this.theme.title);
 
     const header = this.doc.createElement('div');
     header.className = 'grovs-header';
 
     const heading = this.doc.createElement('span');
     heading.className = 'grovs-heading';
-    heading.textContent = 'Messages';
+    heading.textContent = this.theme.title;
 
     const badge = this.doc.createElement('span');
     badge.className = 'grovs-badge';
     badge.setAttribute('data-count', '0');
 
+    const closeButton = this.closeButton(() => this.close());
     header.appendChild(heading);
     header.appendChild(badge);
-    header.appendChild(this.closeButton(() => this.close()));
+    header.appendChild(closeButton);
 
     const list = this.doc.createElement('div');
     list.className = 'grovs-item-list';
@@ -151,10 +178,17 @@ export class MessagesUI {
     this.listElement = list;
     this.badge = badge;
     this.unread = 0;
+    this.renderedIds.clear();
     this.page = 1;
     this.exhausted = false;
+    this.ensureEscListener();
+    closeButton.focus();
 
     await this.loadMessages();
+    // The server total covers unloaded pages; the per-row tally set during
+    // rendering stays when the request fails or a newer open owns the badge.
+    const serverCount = await this.service.fetchUnreadCount();
+    if (serverCount !== null && this.badge === badge) this.setUnread(serverCount);
   }
 
   openPage(message: GrovsMessage): void {
@@ -181,6 +215,10 @@ export class MessagesUI {
 
     const card = this.doc.createElement('div');
     card.className = 'grovs-card grovs-detail-card';
+    card.setAttribute('role', 'dialog');
+    card.setAttribute('aria-modal', 'true');
+    card.setAttribute('aria-label', message.title);
+    this.ensureEscListener();
 
     const header = this.doc.createElement('div');
     header.className = 'grovs-header';
@@ -192,6 +230,7 @@ export class MessagesUI {
       this.closeButton(() => {
         modal.remove();
         this.ownModals.delete(modal);
+        this.releaseEscListenerIfIdle();
       }),
     );
 
@@ -215,6 +254,10 @@ export class MessagesUI {
   }
 
   close(): void {
+    if (this.escListener) {
+      this.doc.removeEventListener('keydown', this.escListener);
+      this.escListener = null;
+    }
     for (const modal of this.ownModals) modal.remove();
     this.ownModals.clear();
     this.host?.remove();
@@ -275,11 +318,32 @@ export class MessagesUI {
       return;
     }
 
-    for (const message of messages) {
+    const fresh = messages.filter((message) => !this.renderedIds.has(message.id));
+    if (fresh.length === 0) {
+      if (messages.length > 0) {
+        this.logger.info(
+          `Page ${this.page} contained only already-rendered messages; treating the list as exhausted.`,
+        );
+      }
+      this.exhausted = true;
+      return;
+    }
+
+    for (const message of fresh) {
+      this.renderedIds.add(message.id);
       if (!message.read) this.setUnread(this.unread + 1);
       list.appendChild(this.renderRow(message));
     }
-    this.logger.info(`Rendered ${messages.length} message(s) on page ${this.page}.`);
+    this.logger.info(`Rendered ${fresh.length} message(s) on page ${this.page}.`);
+
+    // A short first page has no scrollbar, so scroll-driven pagination would
+    // stall; clientHeight > 0 skips a list with no layout. Terminates because
+    // every fresh row grows scrollHeight (page CSS cannot reach into the
+    // shadow root) until overflow; exhaustion and the dedupe cover the rest.
+    if (!this.exhausted && list.clientHeight > 0 && list.scrollHeight <= list.clientHeight) {
+      this.page += 1;
+      await this.loadMessages();
+    }
   }
 
   private setUnread(count: number): void {
@@ -293,6 +357,14 @@ export class MessagesUI {
     const row = this.doc.createElement('div');
     row.className = 'grovs-item';
     row.setAttribute('data-read', String(message.read));
+    row.setAttribute('role', 'button');
+    row.tabIndex = 0;
+    row.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        row.click();
+      }
+    });
 
     const dot = this.doc.createElement('div');
     dot.className = 'grovs-dot';
