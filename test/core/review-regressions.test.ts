@@ -745,7 +745,10 @@ describe('message iframe hardening', () => {
       access_url: 'javascript:alert(1)',
     });
 
-    const frame = document.querySelector('iframe');
+    // The detail modal renders into a shadow root now; pierce it.
+    const frame = document
+      .getElementById('Grovs-page-modal-1')
+      ?.shadowRoot?.querySelector('iframe');
     expect(frame?.getAttribute('sandbox')).toContain('allow-scripts');
     expect(frame?.getAttribute('sandbox')).not.toContain('allow-same-origin');
     expect(frame?.getAttribute('src')).toBe('about:blank');

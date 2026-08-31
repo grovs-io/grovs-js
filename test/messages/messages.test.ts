@@ -292,6 +292,29 @@ describe('MessagesUI', () => {
     expect(document.querySelectorAll('.grovs-page-modal')).toHaveLength(1);
   });
 
+  it('renders the detail view as a themed card with the sandboxed iframe', async () => {
+    const transport = new FakeTransport();
+    const client = await authedClient(transport);
+
+    makeUI(client).openPage({
+      id: 7,
+      title: 'Hello',
+      subtitle: '',
+      read: false,
+      access_url: 'https://msg.example/x',
+    });
+
+    const modal = document.getElementById('Grovs-page-modal-7')!;
+    const root = modal.shadowRoot!;
+    expect(root.querySelector('style')).not.toBeNull();
+    expect(root.querySelector('.grovs-detail-card')).not.toBeNull();
+    expect(root.querySelector('.grovs-heading')!.textContent).toBe('Hello');
+    const frame = root.querySelector('iframe')!;
+    expect(frame.getAttribute('sandbox')).toBe('allow-scripts allow-popups allow-forms');
+    expect(frame.getAttribute('referrerpolicy')).toBe('no-referrer');
+    expect(frame.src).toBe('https://msg.example/x');
+  });
+
   it('marks a message read when its page is opened', async () => {
     const transport = new FakeTransport();
     const client = await authedClient(transport);

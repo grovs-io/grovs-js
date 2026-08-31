@@ -172,43 +172,28 @@ export class MessagesUI {
     const modal = this.doc.createElement('div');
     modal.id = modalId;
     modal.className = PAGE_MODAL_CLASS;
-    Object.assign(modal.style, {
-      position: 'fixed',
-      top: '0',
-      left: '0',
-      width: '100%',
-      height: '100%',
-      zIndex: '1002',
-      backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    });
+    const root = this.themedRoot(modal);
+
+    const backdrop = this.doc.createElement('div');
+    backdrop.className = 'grovs-backdrop grovs-detail';
+    // Detail modals stack above the list.
+    backdrop.style.zIndex = 'calc(var(--grovs-z) + 2)';
+
+    const card = this.doc.createElement('div');
+    card.className = 'grovs-card grovs-detail-card';
 
     const header = this.doc.createElement('div');
-    Object.assign(header.style, {
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      padding: '10px',
-      color: 'white',
-      height: '20px',
-    });
-
-    const title = this.doc.createElement('h2');
-    title.textContent = message.title;
-    header.appendChild(title);
-
-    const close = this.doc.createElement('button');
-    close.textContent = '✕';
-    Object.assign(close.style, {
-      background: 'transparent',
-      border: 'none',
-      color: 'white',
-      cursor: 'pointer',
-    });
-    close.addEventListener('click', () => {
-      modal.remove();
-      this.ownModals.delete(modal);
-    });
-    header.appendChild(close);
+    header.className = 'grovs-header';
+    const heading = this.doc.createElement('span');
+    heading.className = 'grovs-heading';
+    heading.textContent = message.title;
+    header.appendChild(heading);
+    header.appendChild(
+      this.closeButton(() => {
+        modal.remove();
+        this.ownModals.delete(modal);
+      }),
+    );
 
     const frame = this.doc.createElement('iframe');
     // Notification content is remote and rendered inside the customer's page.
@@ -216,15 +201,13 @@ export class MessagesUI {
     // document, and the scheme check keeps javascript:/data: URLs out.
     frame.setAttribute('sandbox', 'allow-scripts allow-popups allow-forms');
     frame.setAttribute('referrerpolicy', 'no-referrer');
+    frame.className = 'grovs-frame';
     frame.src = safeUrl(message.access_url);
-    Object.assign(frame.style, {
-      width: '100%',
-      height: 'calc(100% - 40px)',
-      border: 'none',
-    });
 
-    modal.appendChild(header);
-    modal.appendChild(frame);
+    card.appendChild(header);
+    card.appendChild(frame);
+    backdrop.appendChild(card);
+    root.appendChild(backdrop);
     this.doc.body.appendChild(modal);
     this.ownModals.add(modal);
 
