@@ -25,7 +25,8 @@ const IDLE_TIMEOUT_MS = 30 * 60_000;
  * than its mechanism.
  */
 export class SessionManager {
-  /** Mirrors the last write so a read does not hit storage on every event. */
+  /** Mirrors the last write so touch() can throttle writes to one a second.
+   *  Reads still go to storage — another tab may have moved the stamp. */
   private cachedActivity: number | null = null;
 
   constructor(

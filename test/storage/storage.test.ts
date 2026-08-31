@@ -3,6 +3,7 @@ import { CookieStorage } from '../../src/storage/cookie-storage';
 import { MemoryStorage } from '../../src/storage/memory-storage';
 import { LocalStorageAdapter } from '../../src/storage/local-storage';
 import { Logger } from '../../src/logging/logger';
+import { GrovsError } from '../../src/net/errors';
 
 describe('MemoryStorage', () => {
   it('round-trips and removes values', () => {
@@ -97,22 +98,34 @@ describe('CookieStorage', () => {
     expect(doc.cookie).toContain('domain=.example.com');
   });
 
-  it('warns when cookieDomain does not match the page host', () => {
+  // A mismatched cookieDomain means the browser silently refuses the cookie
+  // and identity does not persist — the fatal-but-silent config error class
+  // of spec A5. It must surface at the *default* level and through onError,
+  // like its B9 linked-domain sibling; a warn() would be filtered out for
+  // every integrator who has not opted into debugLevel: 'warn'.
+  it('reports through onError when cookieDomain does not match the page host', () => {
     const logger = new Logger();
-    logger.setLevel('warn');
-    const spy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const onError = vi.fn();
+    logger.setOnError(onError);
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
     new CookieStorage(document, '.other-site.com', logger);
-    expect(spy).toHaveBeenCalledOnce();
-    expect(spy.mock.calls[0]?.[0]).toContain('other-site.com');
+
+    expect(onError).toHaveBeenCalledWith(
+      GrovsError.authenticationFailed,
+      expect.stringContaining('other-site.com'),
+    );
+    expect(consoleSpy).toHaveBeenCalledOnce();
     vi.restoreAllMocks();
   });
 
-  it('does not warn when cookieDomain matches the page host', () => {
+  it('does not report when cookieDomain matches the page host', () => {
     const logger = new Logger();
-    logger.setLevel('warn');
-    const spy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const onError = vi.fn();
+    logger.setOnError(onError);
+
     new CookieStorage(document, 'localhost', logger);
-    expect(spy).not.toHaveBeenCalled();
-    vi.restoreAllMocks();
+
+    expect(onError).not.toHaveBeenCalled();
   });
 });

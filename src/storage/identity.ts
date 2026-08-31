@@ -1,4 +1,5 @@
 import { getDocument, probeCookies, probeLocalStorage } from '../core/environment';
+import type { Logger } from '../logging/logger';
 import { CookieStorage } from './cookie-storage';
 import { LocalStorageAdapter } from './local-storage';
 import type { Storage } from './storage';
@@ -25,9 +26,9 @@ export class IdentityStore {
   private readonly cookie: Storage | null;
   private readonly mirror: Storage | null;
 
-  constructor(cookieDomain?: string) {
+  constructor(cookieDomain?: string, logger?: Logger) {
     const doc = getDocument();
-    this.cookie = doc && probeCookies() ? new CookieStorage(doc, cookieDomain) : null;
+    this.cookie = doc && probeCookies() ? new CookieStorage(doc, cookieDomain, logger) : null;
     this.mirror = probeLocalStorage() ? new LocalStorageAdapter() : null;
   }
 

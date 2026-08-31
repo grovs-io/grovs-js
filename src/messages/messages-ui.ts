@@ -142,9 +142,19 @@ export class MessagesUI {
   }
 
   openPage(message: GrovsMessage): void {
+    // Automatic display can open several at once, so they cannot share an id:
+    // each modal takes its message's id, and reopening the same message
+    // focuses nothing new rather than stacking a duplicate.
+    //
+    // The guard is document-scoped on purpose, unlike ownModals: an id is a
+    // document-wide invariant, so if another instance's modal holds it —
+    // possible only if the configure() close-before-replace ordering ever
+    // changes — the right move is still to not mint a duplicate.
+    const modalId = `${PAGE_MODAL_ID}-${message.id}`;
+    if (this.doc.getElementById(modalId)) return;
+
     const modal = this.doc.createElement('div');
-    // Automatic display can open several at once, so they cannot share an id.
-    modal.id = PAGE_MODAL_ID;
+    modal.id = modalId;
     modal.className = PAGE_MODAL_CLASS;
     Object.assign(modal.style, {
       position: 'fixed',

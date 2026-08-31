@@ -6,7 +6,7 @@ import { MessagesUI } from './messages/messages-ui';
 import { getDocument } from './core/environment';
 import { Logger, type LogLevel } from './logging/logger';
 import type { CreateLinkParams } from './net/api';
-import { GrovsV1 } from './compat/v1';
+import { GrovsV1, noteFacadeConfigured } from './compat/v1';
 import type { ScreenNameProvider } from './tracking/auto-screen-tracker';
 import type { CustomPurchase } from './events/payment-events-handler';
 
@@ -32,8 +32,9 @@ function messagesUI(): MessagesUI | null {
  * The v2 facade. Mirrors the static shape of the iOS Grovs class so the two
  * SDKs read as one product.
  */
-export const Grovs = {
+const facade = {
   async configure(config: GrovsConfig): Promise<boolean> {
+    noteFacadeConfigured();
     // React strict mode and hot reload call this twice. The per-client guard
     // cannot help here: a second call builds a *new* client, so without this
     // the previous one's flush interval, lifecycle listeners and History
@@ -239,6 +240,21 @@ export const Grovs = {
   /** The deprecated v1 class. `new Grovs.V1(key, testEnv, callback)`. */
   V1: GrovsV1,
 };
+
+/**
+ * v1 integrators construct the SDK — `new Grovs(key, testEnv, cb)` from npm,
+ * `new Grovs.default(...)` from the CDN bundle — so the export itself must be
+ * constructable, not a plain object. Construction hands back the deprecated
+ * v1 surface; the v2 facade rides on the same value as statics.
+ *
+ * defineProperties rather than Object.assign: the facade has accessors
+ * (userIdentifier, screenNameProvider), and assign would read them once and
+ * copy the values.
+ */
+class GrovsExport extends GrovsV1 {}
+Object.defineProperties(GrovsExport, Object.getOwnPropertyDescriptors(facade));
+
+export const Grovs = GrovsExport as typeof GrovsExport & typeof facade;
 
 import { GrovsError } from './net/errors';
 import { SDK_VERSION } from './version';

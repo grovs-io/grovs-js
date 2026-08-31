@@ -25,6 +25,41 @@ export function __resetDeprecationWarnings(): void {
 }
 
 /**
+ * Two Grovs clients on one page is unsupported (docs/CONTEXT.md): each runs
+ * its own authentication, launch events, timers and session, so everything is
+ * counted twice. The v1 constructor and the v2 statics now share one export,
+ * which makes mixing the eras easy to do by accident — so the first time both
+ * are seen, say so. State lives here rather than in index.ts because index.ts
+ * already imports this module and the reverse would be a cycle.
+ */
+let facadeConfigured = false;
+let v1Constructed = false;
+let coexistenceWarned = false;
+
+function warnCoexistence(): void {
+  if (!facadeConfigured || !v1Constructed || coexistenceWarned) return;
+  coexistenceWarned = true;
+  console.warn(
+    'Grovs — both the v1 constructor and Grovs.configure() are in use on ' +
+      'one page. They are separate clients: sessions, launch events and ' +
+      'timers all run twice. Use one or the other. See MIGRATION.md.',
+  );
+}
+
+/** Called by the facade's configure(), so the shim can detect coexistence. */
+export function noteFacadeConfigured(): void {
+  facadeConfigured = true;
+  warnCoexistence();
+}
+
+/** Test seam: coexistence detection is module-level, like the store above. */
+export function __resetCoexistenceState(): void {
+  facadeConfigured = false;
+  v1Constructed = false;
+  coexistenceWarned = false;
+}
+
+/**
  * The v1 surface, preserved so no existing integrator breaks on upgrade.
  *
  * One behavioural difference is deliberate and documented in MIGRATION.md:
@@ -53,6 +88,8 @@ export class GrovsV1 {
     );
     this.links = new LinkGenerator(this.client);
     this.messages = new MessagesService(this.client);
+    v1Constructed = true;
+    warnCoexistence();
   }
 
   async start(successfullyAuthenticatedCallback?: () => void): Promise<void> {

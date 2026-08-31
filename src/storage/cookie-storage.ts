@@ -1,4 +1,5 @@
 import type { Logger } from '../logging/logger';
+import { GrovsError } from '../net/errors';
 import type { Storage } from './storage';
 
 /** Matches v1's far-future expiry. Safari's ITP clamps this to 7 days; spec A3
@@ -15,7 +16,15 @@ export class CookieStorage implements Storage {
       const host = this.doc.location?.hostname ?? '';
       const bare = domain.startsWith('.') ? domain.slice(1) : domain;
       if (host !== bare && !host.endsWith(`.${bare}`)) {
-        logger.warn(
+        // Fatal-but-silent config error, same class as the B9 linked-domain
+        // 422: identity stops persisting and every visit counts as a new
+        // install. reportErrorOnce so it survives the default 'error' level
+        // and reaches onError — a warn() is filtered out for every integrator
+        // who has not opted into debugLevel: 'warn'. authenticationFailed is
+        // the closest of the four contract codes (spec A5), matching B9.
+        logger.reportErrorOnce(
+          'cookieDomain',
+          GrovsError.authenticationFailed,
           `cookieDomain "${domain}" does not match the page host "${host}". ` +
             'The browser will silently refuse the cookie and identity will not persist.',
         );

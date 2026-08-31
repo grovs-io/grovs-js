@@ -173,7 +173,7 @@ describe('MessagesUI', () => {
       access_url: 'https://x.com',
     });
 
-    const overlay = document.getElementById('Grovs-page-modal');
+    const overlay = document.getElementById('Grovs-page-modal-1');
     expect(overlay?.style.backgroundColor).toBe('rgba(0, 0, 0, 0.5)');
     expect(overlay?.style.background).not.toContain('red');
   });
@@ -207,6 +207,35 @@ describe('MessagesUI', () => {
     await ui.showMessagesList();
     await ui.showMessagesList();
     expect(document.querySelectorAll('#Grovs-modal')).toHaveLength(1);
+  });
+
+  // Automatic display can open several pages at once; a shared id would put
+  // duplicate ids in the customer's DOM and break getElementById for all but
+  // the first.
+  it('gives concurrently open page modals distinct ids', async () => {
+    const transport = new FakeTransport();
+    const client = await authedClient(transport);
+
+    const ui = makeUI(client);
+    ui.openPage({ id: 1, title: 'A', subtitle: '', read: false, access_url: 'https://x.com' });
+    ui.openPage({ id: 2, title: 'B', subtitle: '', read: false, access_url: 'https://x.com' });
+
+    const modals = Array.from(document.querySelectorAll('.grovs-page-modal'));
+    expect(modals).toHaveLength(2);
+    const ids = modals.map((modal) => modal.id);
+    expect(new Set(ids).size).toBe(2);
+  });
+
+  it('does not open the same message twice', async () => {
+    const transport = new FakeTransport();
+    const client = await authedClient(transport);
+
+    const ui = makeUI(client);
+    const message = { id: 1, title: 'A', subtitle: '', read: false, access_url: 'https://x.com' };
+    ui.openPage(message);
+    ui.openPage(message);
+
+    expect(document.querySelectorAll('.grovs-page-modal')).toHaveLength(1);
   });
 
   it('marks a message read when its page is opened', async () => {

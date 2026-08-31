@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GrovsClient } from '../../src/core/client';
+import { QUEUE_STORAGE_KEY } from '../../src/storage/persisted-queue';
 import { FakeTransport } from '../helpers/fake-transport';
 import { FakeStorage } from '../helpers/fake-storage';
 import { GrovsError } from '../../src/net/errors';
@@ -281,6 +282,70 @@ describe('GrovsClient.setDebugLevel', () => {
     client.setEnabled(false);
     expect(spy).toHaveBeenCalled();
     vi.restoreAllMocks();
+  });
+});
+
+describe('GrovsClient.setScreenAliases', () => {
+  // Spec B8: aliases appear on the dashboard too. Integrators call
+  // setScreenAliases() alongside configure() without awaiting it, so a map
+  // set before authentication completes has to be pushed once it does —
+  // otherwise it resolves screens locally but never reaches the dashboard.
+  it('syncs aliases set before authentication once configure completes', async () => {
+    const { client, transport } = make();
+    client.setScreenAliases({ '/checkout': 'Checkout' });
+    expect(transport.requestsTo('/screen_aliases')).toHaveLength(0);
+
+    transport.enqueue(AUTH_OK);
+    await client.configure();
+
+    await vi.waitFor(() => expect(transport.requestsTo('/screen_aliases')).toHaveLength(1));
+  });
+
+  // Mirrors pushIdentity: the dirty flag survives a failed push, so the next
+  // configure() retries instead of silently never reaching the dashboard.
+  it('retries the catch-up sync on the next configure when it failed', async () => {
+    const { client, transport } = make();
+    client.setScreenAliases({ '/checkout': 'Checkout' });
+
+    transport
+      .enqueue(AUTH_OK)
+      .enqueue({ ok: true, status: 200, body: { data: null } })
+      .enqueueStatus(500); // the catch-up sync fails
+    await client.configure();
+    await vi.waitFor(() => expect(transport.requestsTo('/screen_aliases')).toHaveLength(1));
+
+    await client.configure();
+    await vi.waitFor(() => expect(transport.requestsTo('/screen_aliases')).toHaveLength(2));
+  });
+});
+
+describe('GrovsClient lifecycle wiring', () => {
+  afterEach(() => {
+    Object.defineProperty(document, 'visibilityState', {
+      value: 'visible',
+      configurable: true,
+    });
+  });
+
+  // Spec A4: persistence is forced on pagehide *and* visibilitychange. Mobile
+  // Safari often fires only the latter before killing a background tab, so a
+  // hide that merely starts the async network flush leaves the debounced
+  // queue unwritten — and the tab's final events lost with it.
+  it('persists the queue when the tab is hidden', async () => {
+    const { client, transport, storage } = make();
+    transport.enqueue(AUTH_OK);
+    await client.configure();
+
+    client.track('added_to_cart');
+
+    Object.defineProperty(document, 'visibilityState', {
+      value: 'hidden',
+      configurable: true,
+    });
+    document.dispatchEvent(new Event('visibilitychange'));
+
+    expect(storage.get(QUEUE_STORAGE_KEY)).toContain('added_to_cart');
+    client.dispose();
   });
 });
 

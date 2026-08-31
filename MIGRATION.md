@@ -31,9 +31,18 @@ npm install grovs@^2.0.0
 ```javascript
 import Grovs from 'grovs';
 
-const sdk = new Grovs.V1(apiKey, false, (data) => console.log(data));
+const sdk = new Grovs(apiKey, false, (data) => console.log(data));
 await sdk.start();
 ```
+
+Constructing the default export returns the deprecated v1 surface, so
+existing npm and CDN (`new Grovs.default(...)`) integrations keep working
+without edits. The same class is also reachable explicitly as `Grovs.V1`.
+
+The constructor and the static `Grovs.configure()` API are eras, not
+alternatives: each builds its own client, so using both on one page runs
+sessions, launch events and timers twice. Pick one — the SDK warns if it
+sees both.
 
 Each deprecated method logs one warning naming its replacement. The shim is
 removed in 3.0.

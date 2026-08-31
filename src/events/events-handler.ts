@@ -7,7 +7,7 @@ import type { ApiService, BatchResult } from '../net/api';
 import { GrovsError } from '../net/errors';
 import type { PersistedQueue } from '../storage/persisted-queue';
 import { enrich } from './enrich';
-import type { QueuedEvent } from './event';
+import { isSystemEvent, type QueuedEvent } from './event';
 
 /**
  * Cadence is iOS's, not an implementer's choice. These two numbers determine
@@ -162,8 +162,8 @@ export class EventsHandler {
     }
 
     const ordered = [
-      ...pending.filter((event) => typeof event.event === 'string'),
-      ...pending.filter((event) => typeof event.event !== 'string'),
+      ...pending.filter(isSystemEvent),
+      ...pending.filter((event) => !isSystemEvent(event)),
     ];
 
     const batch: QueuedEvent[] = [];

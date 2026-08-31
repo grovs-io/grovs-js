@@ -42,8 +42,9 @@ export class ScreenAliases {
     return null;
   }
 
-  /** Chunks past the backend's 200-per-request cap. */
-  async sync(api: ApiService, logger: Logger): Promise<void> {
+  /** Chunks past the backend's 200-per-request cap. Returns whether every
+   *  chunk landed, so callers holding a dirty flag know to retry. */
+  async sync(api: ApiService, logger: Logger): Promise<boolean> {
     const rows = this.compiled.map((entry) => ({
       identifier: entry.pattern,
       alias: entry.alias,
@@ -54,9 +55,10 @@ export class ScreenAliases {
       const response = await api.syncScreenAliases(chunk);
       if (!response.ok) {
         logger.warn(`Could not sync ${chunk.length} screen alias(es) to the dashboard.`);
-        return;
+        return false;
       }
     }
+    return true;
   }
 }
 

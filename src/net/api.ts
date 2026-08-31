@@ -58,7 +58,6 @@ export interface BatchResult {
 const PATHS = {
   authenticate: '/authenticate',
   batchEvents: '/events/batch',
-  customEvent: '/event/custom',
   screenAliases: '/screen_aliases',
   linkDetails: '/link_details',
   addPaymentEvent: '/add_payment_event',
@@ -157,10 +156,6 @@ export class ApiService {
       body: { events },
       ...(keepalive ? { keepalive: true } : {}),
     });
-  }
-
-  addCustomEvent(body: unknown): Promise<TransportResponse> {
-    return this.post(PATHS.customEvent, body);
   }
 
   /** Backend caps at 200 per request (spec B8); the caller chunks. */

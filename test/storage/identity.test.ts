@@ -1,5 +1,7 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IdentityStore, LINKSQUARED_STORAGE_KEY } from '../../src/storage/identity';
+import { Logger } from '../../src/logging/logger';
+import * as environment from '../../src/core/environment';
 
 function clearCookies(): void {
   document.cookie.split(';').forEach((c) => {
@@ -60,11 +62,92 @@ describe('IdentityStore', () => {
     expect(store.get()).toBe('from-cookie');
   });
 
+  // Spec A3/T11: a cookieDomain the page host does not sit under means the
+  // browser silently refuses the cookie. This is the production path — the
+  // client builds its IdentityStore directly — and the report must be
+  // observable with a *default-config* logger, or the diagnostic is dead in
+  // exactly the installs it exists for.
+  it('reports through onError when cookieDomain does not match the page host', () => {
+    const logger = new Logger();
+    const onError = vi.fn();
+    logger.setOnError(onError);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    new IdentityStore('.mismatched.example', logger);
+
+    expect(onError).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining('.mismatched.example'),
+    );
+    vi.restoreAllMocks();
+  });
+
+  // The consent flow constructs IdentityStore twice against the same logger
+  // (constructor, then grantConsent); one misconfiguration is one report.
+  it('reports a mismatch once per logger, not once per construction', () => {
+    const logger = new Logger();
+    const onError = vi.fn();
+    logger.setOnError(onError);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    new IdentityStore('.mismatched.example', logger);
+    new IdentityStore('.mismatched.example', logger);
+
+    expect(onError).toHaveBeenCalledOnce();
+    vi.restoreAllMocks();
+  });
+
+  it('does not report when cookieDomain matches the page host', () => {
+    const logger = new Logger();
+    const onError = vi.fn();
+    logger.setOnError(onError);
+
+    new IdentityStore(location.hostname, logger);
+
+    expect(onError).not.toHaveBeenCalled();
+  });
+
   it('clears both stores', () => {
     const store = new IdentityStore();
     store.set('visitor-1');
     store.clear();
     expect(store.get()).toBeNull();
     expect(localStorage.getItem(LINKSQUARED_STORAGE_KEY)).toBeNull();
+  });
+
+  // Degradation guarantees, previously covered only through the deleted
+  // resolveStorage. Spec A1 makes "does not throw during SSR" a promise.
+  describe('degradation', () => {
+    afterEach(() => vi.restoreAllMocks());
+
+    it('does not throw and stays inert with no document (SSR)', () => {
+      vi.spyOn(environment, 'getDocument').mockReturnValue(null);
+      vi.spyOn(environment, 'probeLocalStorage').mockReturnValue(false);
+
+      const store = new IdentityStore();
+      expect(() => store.set('visitor-1')).not.toThrow();
+      expect(store.get()).toBeNull();
+      expect(() => store.clear()).not.toThrow();
+    });
+
+    it('falls back to the mirror alone when cookies are unavailable', () => {
+      vi.spyOn(environment, 'probeCookies').mockReturnValue(false);
+
+      const store = new IdentityStore();
+      store.set('visitor-1');
+
+      expect(document.cookie).not.toContain('visitor-1');
+      expect(store.get()).toBe('visitor-1');
+    });
+
+    it('keeps the cookie tier when localStorage is unavailable', () => {
+      vi.spyOn(environment, 'probeLocalStorage').mockReturnValue(false);
+
+      const store = new IdentityStore();
+      store.set('visitor-1');
+
+      expect(localStorage.getItem(LINKSQUARED_STORAGE_KEY)).toBeNull();
+      expect(store.get()).toBe('visitor-1');
+    });
   });
 });

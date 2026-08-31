@@ -73,6 +73,10 @@ export function __resetPendingConsentStore(): void {
   pendingConsentStore = null;
 }
 
+/**
+ * @internal Test seams, not integrator API — reaches the public .d.ts only
+ * because the v1 constructor signature carries it.
+ */
 export interface ClientDeps {
   transport?: Transport;
   storage?: Storage;
@@ -117,7 +121,7 @@ export class GrovsClient {
 
   private enabled = true;
   /**
-   * Gated by requireConsent. While false, resolveStorage is bypassed for an
+   * Gated by requireConsent. While false, every tier is swapped for an
    * in-memory store and no request leaves — so nothing is written to the
    * device and nothing reaches the backend.
    */
@@ -126,6 +130,8 @@ export class GrovsClient {
   /** True when identity was set before authentication finished, so it still
    *  needs pushing. Mirrors shouldUpdateIdentifiers in v1's manager. */
   private identityDirty = false;
+  /** Same catch-up for screen aliases set before authentication (spec B8). */
+  private aliasesDirty = false;
 
   constructor(config: GrovsConfig, deps: ClientDeps = {}) {
     this.config = resolveConfig(config);
@@ -156,7 +162,7 @@ export class GrovsClient {
     this.identityStore = deps.storage
       ? null
       : this.consentGranted
-        ? new IdentityStore(this.config.cookieDomain)
+        ? new IdentityStore(this.config.cookieDomain, this.logger)
         : null;
 
     this.api = new ApiService(
@@ -192,7 +198,13 @@ export class GrovsClient {
       clock: this.clock,
       onEngagement: (seconds) => this.events.log('time_spent', seconds),
       onExit: () => this.events.flushOnExit(),
-      onHide: () => void this.events.flush(),
+      onHide: () => {
+        // Persist before flushing (spec A4): on mobile Safari a hidden tab is
+        // often killed with no pagehide, so the debounced queue must reach
+        // storage now — the async flush may never get to acknowledge.
+        this.queue.flushToStorage();
+        void this.events.flush();
+      },
     });
     this.screens = new AutoScreenTracker({
       aliases: this.aliases,
@@ -244,7 +256,7 @@ export class GrovsClient {
     // backend mints a fresh identifier, and they are counted as a new install
     // rather than recognised.
     if (!this.identityStore && !this.storageInjected) {
-      this.identityStore = new IdentityStore(this.config.cookieDomain);
+      this.identityStore = new IdentityStore(this.config.cookieDomain, this.logger);
       this.context.linksquaredId = this.identityStore.get();
     }
 
@@ -271,6 +283,10 @@ export class GrovsClient {
     this.context.reset();
     this.pipelineStarted = false;
     this.identityDirty = false;
+    // aliasesDirty deliberately survives: the alias map is integrator
+    // configuration, not user data — reset() does not clear this.aliases
+    // either, and a pending dashboard sync should still happen on the next
+    // configure().
     this.receivedPayloads.length = 0;
     // Durable Grovs_path is cleared above; the in-memory copy has to go too,
     // or events after the reset inherit the previous campaign.
@@ -392,6 +408,14 @@ export class GrovsClient {
 
     if (this.identityDirty) void this.pushIdentity();
 
+    // As with pushIdentity: the flag clears only on success, so a failed
+    // sync is retried by the next configure() rather than dropped.
+    if (this.aliasesDirty) {
+      void this.aliases.sync(this.api, this.logger).then((ok) => {
+        if (ok) this.aliasesDirty = false;
+      });
+    }
+
     // Automatic display is a console setting, so it has to happen without the
     // integrator calling anything — that is what "automatic" means, and iOS
     // ships it that way.
@@ -468,7 +492,14 @@ export class GrovsClient {
   /** Syncs the map to the dashboard so aliases appear there too (spec B8). */
   setScreenAliases(aliases: Record<string, string>): void {
     this.aliases.set(aliases);
-    if (this.context.authenticated) void this.aliases.sync(this.api, this.logger);
+    if (this.context.authenticated) {
+      void this.aliases.sync(this.api, this.logger);
+    } else {
+      // Pushed by configure() once authentication completes; without this a
+      // map set alongside configure() resolves screens locally but never
+      // reaches the dashboard.
+      this.aliasesDirty = true;
+    }
   }
 
   set screenNameProvider(provider: ScreenNameProvider | null) {
@@ -695,9 +726,6 @@ export class GrovsClient {
    * matching is exactly what `data_for_device` → `resolve_by_fingerprint`
    * uses to resolve a deferred deep link — so sending three fields left web
    * deferred deep linking matching on almost no signal.
-   *
-   * app_version and build stay "0": a web page has no build number, and the
-   * backend treats them as free-form strings.
    */
   private deviceDetails(): DeviceDetails {
     return {

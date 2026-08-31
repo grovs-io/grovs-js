@@ -20,6 +20,7 @@ function check(label, condition, detail) {
 // --- CJS: standard interop shape, facade under .default ---
 const cjs = require('../dist/grovs.cjs');
 check('cjs', typeof cjs.default?.configure === 'function', 'default.configure missing');
+check('cjs', typeof cjs.default === 'function', 'default not constructable (v1 `new Grovs(...)`)');
 check('cjs', cjs.GrovsError?.authenticationFailed === 1, 'GrovsError missing');
 check('cjs', cjs.SDK_VERSION === '2.0', 'SDK_VERSION missing');
 check('cjs', typeof cjs.GrovsV1 === 'function', 'GrovsV1 missing');
@@ -27,6 +28,7 @@ check('cjs', typeof cjs.GrovsV1 === 'function', 'GrovsV1 missing');
 // --- ESM ---
 const esm = await import('../dist/grovs.js');
 check('esm', typeof esm.default?.configure === 'function', 'default.configure missing');
+check('esm', typeof esm.default === 'function', 'default not constructable (v1 `new Grovs(...)`)');
 check('esm', esm.GrovsError?.authenticationFailed === 1, 'GrovsError missing');
 check('esm', esm.SDK_VERSION === '2.0', 'SDK_VERSION missing');
 
@@ -35,6 +37,8 @@ const sandbox = {};
 new Script(readFileSync('dist/grovs.global.js', 'utf8')).runInNewContext(sandbox);
 const g = sandbox.Grovs;
 check('iife', typeof g?.configure === 'function', 'window.Grovs.configure missing');
+check('iife', typeof g === 'function', 'window.Grovs not constructable (v1 `new Grovs(...)`)');
+check('iife', typeof g?.default === 'function', 'window.Grovs.default not constructable (v1 CDN shape)');
 check('iife', typeof g?.V1 === 'function', 'window.Grovs.V1 missing');
 check('iife', g?.GrovsError?.authenticationFailed === 1, 'window.Grovs.GrovsError missing');
 check('iife', g?.SDK_VERSION === '2.0', 'window.Grovs.SDK_VERSION missing');

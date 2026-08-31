@@ -290,7 +290,7 @@ describe('MessagesUI shadow isolation and automatic display', () => {
     const ui = new MessagesUI(document, new MessagesService(client), new Logger());
     await ui.displayAutomaticMessages();
 
-    expect(document.getElementById('Grovs-page-modal')).not.toBeNull();
+    expect(document.querySelector('.grovs-page-modal')).not.toBeNull();
   });
 
   it('opens nothing when there are no automatic messages', async () => {
@@ -301,6 +301,6 @@ describe('MessagesUI shadow isolation and automatic display', () => {
     const ui = new MessagesUI(document, new MessagesService(client), new Logger());
     await ui.displayAutomaticMessages();
 
-    expect(document.getElementById('Grovs-page-modal')).toBeNull();
+    expect(document.querySelector('.grovs-page-modal')).toBeNull();
   });
 });
