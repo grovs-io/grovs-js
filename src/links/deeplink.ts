@@ -1,7 +1,24 @@
 import type { Storage } from '../storage/storage';
 
 export const GROVS_QUERY_PARAM = 'Grovs';
+/** Appended by the redirect page alongside `Grovs` for the legacy SDK. */
+export const LEGACY_QUERY_PARAM = 'linksquared';
 export const STORED_PATH_KEY = 'Grovs_path';
+
+/**
+ * `Grovs` wins; `linksquared` and case variants of either are accepted so a
+ * legacy integration or a case-mangled URL (email scanners rewrite them)
+ * still attributes instead of silently falling back to fingerprinting.
+ */
+function readPathParam(params: URLSearchParams): string | null {
+  const exact = params.get(GROVS_QUERY_PARAM) ?? params.get(LEGACY_QUERY_PARAM);
+  if (exact !== null) return exact;
+  for (const [key, value] of params) {
+    const lower = key.toLowerCase();
+    if (lower === 'grovs' || lower === 'linksquared') return value;
+  }
+  return null;
+}
 
 /**
  * Extracts and persists the Grovs path from the page URL.
@@ -27,7 +44,7 @@ export class DeeplinkResolver {
 
     let value: string | null = null;
     try {
-      value = new URL(href).searchParams.get(GROVS_QUERY_PARAM);
+      value = readPathParam(new URL(href).searchParams);
     } catch {
       return this.getStoredPath();
     }

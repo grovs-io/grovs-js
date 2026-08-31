@@ -35,6 +35,25 @@ describe('DeeplinkResolver', () => {
     expect(resolver.capture()).toBeNull();
   });
 
+  // The redirect page appends `linksquared` alongside `Grovs` for the legacy
+  // SDK; a URL carrying only that one must still attribute.
+  it('falls back to the legacy linksquared parameter', () => {
+    const { resolver, storage: s } = make('https://site.com/?linksquared=abc123');
+    expect(resolver.capture()).toBe('abc123');
+    expect(s.get('Grovs_path')).toBe('abc123');
+  });
+
+  it('accepts case-mangled parameter names', () => {
+    expect(make('https://site.com/?grovs=lower').resolver.capture()).toBe('lower');
+    expect(make('https://site.com/?GROVS=upper').resolver.capture()).toBe('upper');
+    expect(make('https://site.com/?LinkSquared=mixed').resolver.capture()).toBe('mixed');
+  });
+
+  it('prefers Grovs over linksquared when both are present', () => {
+    const { resolver } = make('https://site.com/?linksquared=old&Grovs=new');
+    expect(resolver.capture()).toBe('new');
+  });
+
   it('returns null rather than throwing on an unparseable URL', () => {
     const { resolver } = make('not a url');
     expect(resolver.capture()).toBeNull();
