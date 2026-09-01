@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `generateLink()` accepts `copyToClipboardiOS` and `copyToClipboardAndroid`,
+  which ask the Grovs preview page to copy the link so a fresh mobile install
+  can be matched back to it. Omitting an option leaves the link on the project
+  default; `false` is an explicit override. The web SDK never reads the
+  clipboard itself — that happens in the iOS and Android SDKs after install.
+
 ## 2.0.0
 
 ### Added

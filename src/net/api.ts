@@ -36,6 +36,11 @@ export interface CreateLinkParams {
   customRedirects?: CustomRedirects;
   showPreviewiOS?: boolean;
   showPreviewAndroid?: boolean;
+  /** Copies the link on the preview page so a fresh install can be matched to
+   *  it. Omit to inherit the project default; needs `showPreviewiOS`. */
+  copyToClipboardiOS?: boolean;
+  /** Android counterpart; needs `showPreviewAndroid`. */
+  copyToClipboardAndroid?: boolean;
   /** Campaign name, e.g. "BlackFriday2025". */
   trackingCampaign?: string;
   /** Traffic source, e.g. "instagram", "newsletter". */
@@ -97,7 +102,7 @@ export class ApiService {
     return this.post(PATHS.dataForDeviceAndPath, { ...details, path });
   }
 
-  /** The full 11-parameter surface, matching Grovs.generateLink on iOS. */
+  /** The full parameter surface, matching Grovs.generateLink on iOS. */
   createLink(params: CreateLinkParams): Promise<TransportResponse> {
     const body: Record<string, unknown> = {};
     if (params.title) body['title'] = params.title;
@@ -113,6 +118,16 @@ export class ApiService {
     if (typeof params.showPreviewiOS === 'boolean') body['show_preview_ios'] = params.showPreviewiOS;
     if (typeof params.showPreviewAndroid === 'boolean') {
       body['show_preview_android'] = params.showPreviewAndroid;
+    }
+    // Absent means "inherit the project default" server-side (the column is
+    // tri-state), so an unset option must leave the key out, not send false.
+    // Defined outside this repo, in backend-development-internal:
+    // docs/plans/2026-09-01-js-sdk-clipboard-implementation.md.
+    if (typeof params.copyToClipboardiOS === 'boolean') {
+      body['copy_to_clipboard_ios'] = params.copyToClipboardiOS;
+    }
+    if (typeof params.copyToClipboardAndroid === 'boolean') {
+      body['copy_to_clipboard_android'] = params.copyToClipboardAndroid;
     }
     if (params.trackingCampaign) body['tracking_campaign'] = params.trackingCampaign;
     if (params.trackingSource) body['tracking_source'] = params.trackingSource;

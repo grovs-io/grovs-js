@@ -117,7 +117,16 @@ function stubFor(path) {
     case '/create_link':
       return { status: 200, body: { link: 'https://sqd.link/demo-abc' } };
     case '/link_details':
-      return { status: 200, body: { path: 'demo-abc', title: 'Demo link' } };
+      // Tri-state: an explicit override and an inherited default.
+      return {
+        status: 200,
+        body: {
+          path: 'demo-abc',
+          title: 'Demo link',
+          copy_to_clipboard_ios: false,
+          copy_to_clipboard_android: null,
+        },
+      };
     case '/events/batch':
       return { status: 200, body: { accepted: 99, rejected: 0, errors: [] } };
     case '/visitor_attributes':
@@ -243,8 +252,13 @@ on('btn-generateLinkFull', async () =>
       data: { k: 'v' },
       tags: ['launch'],
       customRedirects: { ios: { link: 'https://ios', openAppIfInstalled: true } },
-      showPreviewiOS: false,
+      // Both previews on, so the clipboard flags are unambiguously live: the
+      // pair exercises an explicit false and an explicit true, which is the
+      // distinction the tri-state rests on.
+      showPreviewiOS: true,
       showPreviewAndroid: true,
+      copyToClipboardiOS: false,
+      copyToClipboardAndroid: true,
       trackingCampaign: 'BlackFriday2025',
       trackingSource: 'instagram',
       trackingMedium: 'social',

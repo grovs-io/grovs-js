@@ -137,6 +137,8 @@ const url = await Grovs.generateLink({
   tags: ["launch"],
   showPreviewiOS: false,
   showPreviewAndroid: true,
+  copyToClipboardiOS: false,
+  copyToClipboardAndroid: true,
   customRedirects: {
     ios: { link: "https://apps.apple.com/...", openAppIfInstalled: true },
     android: { link: "https://play.google.com/..." },
@@ -148,8 +150,19 @@ const url = await Grovs.generateLink({
 });
 ```
 
-Resolves `null` on failure; the reason arrives through `onError`. Details for a
-link the SDK generated:
+Resolves `null` on failure; the reason arrives through `onError`.
+
+`copyToClipboardiOS` / `copyToClipboardAndroid` ask the Grovs-hosted preview page
+to copy the link to the clipboard, so a fresh mobile install can be matched back
+to it by the native SDK. Omit them and the link inherits the project default —
+passing `false` is an explicit override, not the same thing. They only take
+effect where the preview page is shown for that platform (`showPreviewiOS` /
+`showPreviewAndroid`), and there is no combined `copyToClipboard` shorthand;
+the toggles are per-platform by design. The web SDK never reads the clipboard
+itself: the copy happens on the preview page and the read-back happens in the
+iOS and Android SDKs after install.
+
+Details for a link the SDK generated:
 
 ```javascript
 const details = await Grovs.linkDetails("abc123");

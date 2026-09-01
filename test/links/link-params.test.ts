@@ -33,7 +33,7 @@ async function authedClient(transport: FakeTransport, onError?: () => void) {
 }
 
 describe('createLink full parameter surface', () => {
-  it('sends all eleven parameters', async () => {
+  it('sends the full parameter surface', async () => {
     const transport = new FakeTransport();
     await api(transport).createLink({
       title: 'T',
@@ -48,6 +48,8 @@ describe('createLink full parameter surface', () => {
       },
       showPreviewiOS: false,
       showPreviewAndroid: true,
+      copyToClipboardiOS: true,
+      copyToClipboardAndroid: false,
       trackingCampaign: 'BlackFriday2025',
       trackingSource: 'instagram',
       trackingMedium: 'social',
@@ -61,6 +63,8 @@ describe('createLink full parameter surface', () => {
     expect(body['tags']).toBe('["a","b"]');
     expect(body['show_preview_ios']).toBe(false);
     expect(body['show_preview_android']).toBe(true);
+    expect(body['copy_to_clipboard_ios']).toBe(true);
+    expect(body['copy_to_clipboard_android']).toBe(false);
     expect(body['tracking_campaign']).toBe('BlackFriday2025');
     expect(body['tracking_source']).toBe('instagram');
     expect(body['tracking_medium']).toBe('social');
@@ -102,6 +106,26 @@ describe('createLink full parameter surface', () => {
     expect((transport.last?.body as Record<string, unknown>)['show_preview_ios']).toBe(false);
   });
 
+  // The backend reads an absent key as "inherit the project default", so
+  // defaulting these to false would silently override the project setting.
+  it('omits the clipboard params entirely when unset', async () => {
+    const transport = new FakeTransport();
+    await api(transport).createLink({ title: 'T', showPreviewiOS: true });
+
+    const body = transport.last?.body as Record<string, unknown>;
+    expect('copy_to_clipboard_ios' in body).toBe(false);
+    expect('copy_to_clipboard_android' in body).toBe(false);
+  });
+
+  it('sends clipboard flags when explicitly false', async () => {
+    const transport = new FakeTransport();
+    await api(transport).createLink({ copyToClipboardiOS: false, copyToClipboardAndroid: false });
+
+    const body = transport.last?.body as Record<string, unknown>;
+    expect(body['copy_to_clipboard_ios']).toBe(false);
+    expect(body['copy_to_clipboard_android']).toBe(false);
+  });
+
   it('omits everything absent', async () => {
     const transport = new FakeTransport();
     await api(transport).createLink({ title: 'T' });
@@ -124,6 +148,25 @@ describe('linkDetails', () => {
     const details = await new LinkGenerator(client).linkDetails('abc');
     expect(details).toEqual({ path: 'abc', title: 'T' });
     expect(transport.last?.body).toEqual({ path: 'abc' });
+  });
+
+  // Tri-state: true / false / null, where null means the link inherits the
+  // project default. The body is passed through untyped, so nulls survive.
+  it('passes the clipboard flags through, null included', async () => {
+    const transport = new FakeTransport();
+    const client = await authedClient(transport);
+    transport.enqueue({
+      ok: true,
+      status: 200,
+      body: { path: 'abc', copy_to_clipboard_ios: true, copy_to_clipboard_android: null },
+    });
+
+    const details = await new LinkGenerator(client).linkDetails('abc');
+    expect(details).toEqual({
+      path: 'abc',
+      copy_to_clipboard_ios: true,
+      copy_to_clipboard_android: null,
+    });
   });
 
   // The backend answers null with a 200 for an unknown path, so absent is not

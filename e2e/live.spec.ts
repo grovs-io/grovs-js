@@ -133,6 +133,17 @@ test.describe('live backend', () => {
       path,
     );
     expect(details, 'linkDetails returned nothing for a link we just made').toBeTruthy();
+
+    // The only check that the clipboard keys were stored rather than ignored:
+    // an unpermitted param is dropped silently, so the 200 above proves
+    // nothing. The demo enables both previews, so neither flag can be nulled
+    // for want of one — a null back here means the key never landed.
+    const link = details as Record<string, unknown>;
+    expect(
+      link['copy_to_clipboard_ios'],
+      'copy_to_clipboard_ios not echoed — the backend counterpart may not be deployed here',
+    ).toBe(false);
+    expect(link['copy_to_clipboard_android']).toBe(true);
   });
 
   test('resolves a deep link arriving through the query parameter', async ({ page }) => {
