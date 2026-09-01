@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import Grovs from '../src/index';
 import { GrovsClient } from '../src/core/client';
+import { EventsHandler } from '../src/events/events-handler';
 import { __resetCoexistenceState } from '../src/compat/v1';
 import { FakeTransport } from './helpers/fake-transport';
 import { FakeStorage } from './helpers/fake-storage';
@@ -71,6 +72,63 @@ describe('public facade', () => {
     expect(shutdown).toHaveBeenCalledTimes(1);
 
     shutdown.mockRestore();
+  });
+
+  it('keeps the working client when a later configure() throws', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ linksquared: 'v-1' }), { status: 200 })),
+    );
+    await Grovs.configure({ apiKey: 'k' });
+    expect(Grovs.isAuthenticated()).toBe(true);
+
+    const dispose = vi.spyOn(GrovsClient.prototype, 'dispose');
+    await expect(Grovs.configure({ apiKey: '   ' })).rejects.toThrow(/API key is required/);
+
+    expect(dispose).not.toHaveBeenCalled();
+    // The facade still routes to the live client, not a retired one.
+    expect(Grovs.isAuthenticated()).toBe(true);
+    await expect(Grovs.getMessages(1)).resolves.toEqual([]);
+  });
+
+  // Pre-existing invariant, not new to this diff: the replacement's queue loads
+  // from storage, so the outgoing client must persist before it is constructed.
+  // The pagehide is load-bearing — it forces the replacement's own write, which
+  // is what overwrites a stale snapshot.
+  it('keeps events tracked before a reconfigure', async () => {
+    localStorage.clear();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ linksquared: 'v-1' }), { status: 200 })),
+    );
+
+    await Grovs.configure({ apiKey: 'k' });
+    Grovs.track('from_client_a');
+    await Grovs.configure({ apiKey: 'k' });
+
+    window.dispatchEvent(new Event('pagehide'));
+
+    const queued = JSON.parse(localStorage.getItem('grovs_events') ?? '[]') as {
+      eventName?: string;
+    }[];
+    expect(queued.map((event) => event.eventName)).toContain('from_client_a');
+  });
+
+  // Spec T9. React strict mode and hot reload both configure twice; the
+  // replacement's handler is new, so only shared dedup state can catch it.
+  it('emits one screen view across a double configure', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ linksquared: 'v-1' }), { status: 200 })),
+    );
+    const enqueue = vi.spyOn(EventsHandler.prototype, 'enqueue');
+
+    document.title = 'Checkout';
+    await Grovs.configure({ apiKey: 'k' });
+    await Grovs.configure({ apiKey: 'k' });
+
+    const views = enqueue.mock.calls.filter(([event]) => event.eventName === 'screen_view');
+    expect(views).toHaveLength(1);
   });
 
   // Two Grovs clients on one page is unsupported (docs/CONTEXT.md): it

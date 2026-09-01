@@ -1,5 +1,5 @@
 import { GrovsClient } from './core/client';
-import type { GrovsConfig } from './core/config';
+import { resolveConfig, type GrovsConfig } from './core/config';
 import { LinkGenerator } from './links/links';
 import { MessagesService, type GrovsMessage } from './messages/messages';
 import { MessagesUI } from './messages/messages-ui';
@@ -37,6 +37,10 @@ function messagesUI(): MessagesUI | null {
 const facade = {
   async configure(config: GrovsConfig): Promise<boolean> {
     noteFacadeConfigured();
+    // Validate before retiring: a throw must not strand the facade on a dead
+    // client. Construct after, or the new queue loads before the old one persists.
+    resolveConfig(config);
+
     // React strict mode and hot reload call this twice. The per-client guard
     // cannot help here: a second call builds a *new* client, so without this
     // the previous one's flush interval, lifecycle listeners and History
@@ -47,14 +51,15 @@ const facade = {
     ui?.close();
     client?.dispose();
 
-    client = new GrovsClient(config);
-    links = new LinkGenerator(client);
-    messages = new MessagesService(client);
+    const next = new GrovsClient(config);
+    client = next;
+    links = new LinkGenerator(next);
+    messages = new MessagesService(next);
     ui = null;
     messagesTheme = config.messagesTheme;
     // Automatic display needs the DOM surface, which lives here.
-    client.messagesUI = messagesUI;
-    return client.configure();
+    next.messagesUI = messagesUI;
+    return next.configure();
   },
 
   generateLink(params: CreateLinkParams): Promise<string | null> {

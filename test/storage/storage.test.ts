@@ -98,6 +98,32 @@ describe('CookieStorage', () => {
     expect(doc.cookie).toContain('domain=.example.com');
   });
 
+  it('states SameSite=Lax rather than relying on the browser default', () => {
+    const doc = { cookie: '', location: { protocol: 'https:' } } as Document;
+    new CookieStorage(doc).set('k', 'v');
+    expect(doc.cookie).toContain('SameSite=Lax');
+  });
+
+  it('marks the cookie Secure on an https origin', () => {
+    const doc = { cookie: '', location: { protocol: 'https:' } } as Document;
+    new CookieStorage(doc).set('k', 'v');
+    expect(doc.cookie).toContain('Secure');
+  });
+
+  it('omits Secure when the document exposes no location', () => {
+    const doc = { cookie: '' } as Document;
+    new CookieStorage(doc).set('k', 'v');
+    expect(doc.cookie).not.toContain('Secure');
+  });
+
+  it('omits Secure on an http origin so local development still persists', () => {
+    const doc = { cookie: '', location: { protocol: 'http:' } } as Document;
+    const s = new CookieStorage(doc);
+    s.set('k', 'v');
+    expect(doc.cookie).not.toContain('Secure');
+    expect(doc.cookie).toContain('SameSite=Lax');
+  });
+
   // A mismatched cookieDomain means the browser silently refuses the cookie
   // and identity does not persist — the fatal-but-silent config error class
   // of spec A5. It must surface at the *default* level and through onError,

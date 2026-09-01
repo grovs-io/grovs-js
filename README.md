@@ -94,7 +94,9 @@ await Grovs.configure({
 | `autoTrackScreenViews` | `true` | Fires screen views on SPA route changes |
 | `cookieDomain` | host-only | Set to span subdomains, e.g. `.example.com` |
 | `requireConsent` | `false` | Store and send nothing until `grantConsent()` |
+| `appVersion` | SDK version | Your app's version, reported with the device fingerprint |
 | `debugLevel` | `"error"` | `"info"`, `"warn"` or `"error"` |
+| `messagesTheme` | built-in | Styling for the messages UI — see [Styling the messages UI](#styling-the-messages-ui) |
 | `onDeeplink` | — | Called with the payload when opened from a link |
 | `onError` | — | Called on every SDK failure |
 

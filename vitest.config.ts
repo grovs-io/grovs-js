@@ -7,6 +7,10 @@ export default defineConfig({
     environmentOptions: { jsdom: { url: 'http://localhost:3000' } },
     include: ['test/**/*.test.ts'],
     setupFiles: ['test/setup.ts'],
+    // A vi.restoreAllMocks() after a failing assertion never runs, leaking a
+    // console mock into later files.
+    restoreMocks: true,
+    unstubGlobals: true,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json-summary'],

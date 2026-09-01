@@ -19,8 +19,9 @@ export function sanitizeProperties(
 ): Record<string, unknown> | undefined {
   if (!properties) return undefined;
 
-  const entries = Object.entries(properties);
-  if (entries.length === 0) return undefined;
+  // keys, not entries: entries reads every value, so one throwing getter kills all.
+  const keys = Object.keys(properties);
+  if (keys.length === 0) return undefined;
 
   const sanitized: Record<string, unknown> = {};
   const dropped: string[] = [];
@@ -33,8 +34,8 @@ export function sanitizeProperties(
   const seen = new WeakSet<object>();
   seen.add(properties);
 
-  for (const [key, value] of entries) {
-    const safe = jsonSafeValue(value, seen);
+  for (const key of keys) {
+    const safe = safely(() => jsonSafeValue(properties[key], seen));
     if (safe === DROP) dropped.push(key);
     else sanitized[key] = safe;
   }
@@ -85,6 +86,15 @@ function byteLength(value: string): number {
 /** Distinguishes "this value must be dropped" from a legitimate null. */
 const DROP = Symbol('drop');
 
+/** A throwing getter costs its key, not the event or the caller's track(). */
+function safely(read: () => unknown): unknown {
+  try {
+    return read();
+  } catch {
+    return DROP;
+  }
+}
+
 function jsonSafeValue(value: unknown, seen: WeakSet<object>): unknown {
   if (value === null) return null;
 
@@ -118,19 +128,28 @@ function jsonSafeValue(value: unknown, seen: WeakSet<object>): unknown {
     if (seen.has(value)) return DROP;
     seen.add(value);
 
-    if (Array.isArray(value)) {
-      const items = value.map((item) => jsonSafeValue(item, seen)).filter((item) => item !== DROP);
-      seen.delete(value);
-      return items;
-    }
+    // finally, not a trailing delete: Object.keys throws on a hostile proxy, and
+    // a stranded entry makes a later sibling reference look like a cycle.
+    try {
+      if (Array.isArray(value)) {
+        const items: unknown[] = [];
+        for (let i = 0; i < value.length; i += 1) {
+          const item = safely(() => jsonSafeValue(value[i], seen));
+          if (item !== DROP) items.push(item);
+        }
+        return items;
+      }
 
-    const result: Record<string, unknown> = {};
-    for (const [key, nested] of Object.entries(value)) {
-      const safe = jsonSafeValue(nested, seen);
-      if (safe !== DROP) result[key] = safe;
+      const record = value as Record<string, unknown>;
+      const result: Record<string, unknown> = {};
+      for (const key of Object.keys(record)) {
+        const safe = safely(() => jsonSafeValue(record[key], seen));
+        if (safe !== DROP) result[key] = safe;
+      }
+      return result;
+    } finally {
+      seen.delete(value);
     }
-    seen.delete(value);
-    return result;
   }
 
   return DROP;

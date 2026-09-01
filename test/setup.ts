@@ -1,3 +1,9 @@
+import { beforeEach } from 'vitest';
+import { __resetScreenDedup } from '../src/events/custom-events-handler';
+
+// Module-level, so it would otherwise leak between tests.
+beforeEach(__resetScreenDedup);
+
 /**
  * jsdom implements no canvas backend, so HTMLCanvasElement.getContext throws
  * "Not implemented" and prints a stack for every call. The SDK catches it —

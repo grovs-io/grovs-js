@@ -90,6 +90,77 @@ describe('sanitizeProperties', () => {
     expect(() => JSON.stringify(result)).not.toThrow();
   });
 
+  it('drops a key whose getter throws, keeping the rest', () => {
+    const properties = {
+      good: 1,
+      get boom(): string {
+        throw new Error('kaboom');
+      },
+      alsoGood: 'x',
+    };
+
+    expect(() => sanitizeProperties(properties)).not.toThrow();
+    expect(sanitizeProperties(properties)).toEqual({ good: 1, alsoGood: 'x' });
+  });
+
+  it('drops a nested key whose getter throws without losing its siblings', () => {
+    const nested = {
+      outer: {
+        kept: true,
+        get boom(): string {
+          throw new Error('kaboom');
+        },
+      },
+      list: [
+        1,
+        {
+          get boom(): string {
+            throw new Error('kaboom');
+          },
+        },
+      ],
+    };
+
+    expect(sanitizeProperties(nested)).toEqual({ outer: { kept: true }, list: [1, {}] });
+  });
+
+  it('names the dropped key in the warning', () => {
+    const logger = new Logger();
+    logger.setLevel('warn');
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    sanitizeProperties(
+      {
+        get boom(): string {
+          throw new Error('kaboom');
+        },
+        fine: 1,
+      },
+      logger,
+    );
+
+    expect(String(spy.mock.calls[0]?.[0])).toContain('boom');
+    vi.restoreAllMocks();
+  });
+
+  it('does not strand the cycle set when listing a key throws', () => {
+    let firstCall = true;
+    const flaky = new Proxy(
+      { id: 1 },
+      {
+        ownKeys(target) {
+          if (firstCall) {
+            firstCall = false;
+            throw new Error('kaboom');
+          }
+          return Reflect.ownKeys(target);
+        },
+      },
+    );
+
+    expect(sanitizeProperties({ a: flaky, b: flaky })).toEqual({ b: { id: 1 } });
+  });
+
   it('keeps a value referenced by two sibling keys', () => {
     const shared = { id: 1 };
     expect(sanitizeProperties({ a: shared, b: shared })).toEqual({ a: { id: 1 }, b: { id: 1 } });

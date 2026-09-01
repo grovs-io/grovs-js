@@ -53,7 +53,11 @@ export class AutoScreenTracker {
     if (!win) return;
 
     this.enabled = true;
-    if (this.installed) return;
+    // Already patched, but re-entry still owes the caller the current screen.
+    if (this.installed) {
+      this.trackCurrent();
+      return;
+    }
 
     const history = win.history;
     const push = history.pushState as History['pushState'] & PatchedFn;

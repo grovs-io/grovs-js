@@ -115,6 +115,16 @@ describe('AutoScreenTracker', () => {
     tracker.stop();
   });
 
+  // The re-entry branch reports on every start; the handler's 1s same-name
+  // dedup is what stops it reaching the dashboard twice.
+  it('re-reports the current screen on a second start', () => {
+    const { tracker, onScreen } = make();
+    tracker.start();
+    tracker.start();
+    expect(onScreen).toHaveBeenCalledTimes(2);
+    tracker.stop();
+  });
+
   it('does not install a second patch when started twice', () => {
     const { tracker } = make();
     tracker.start();
@@ -170,6 +180,26 @@ describe('AutoScreenTracker', () => {
 
     expect(laterVendor).toHaveBeenCalled();
     expect(onScreen).not.toHaveBeenCalled();
+  });
+
+  it('reports the current screen when re-enabled over its own patch', async () => {
+    const { tracker, onScreen } = make();
+    tracker.start();
+    tracker.stop();
+
+    // Re-arm over a foreign patch, so stop() leaves `installed` set.
+    tracker.start();
+    const grovsPatch = history.pushState.bind(history);
+    history.pushState = function (...args: Parameters<History['pushState']>) {
+      grovsPatch(...args);
+    } as History['pushState'];
+    tracker.stop();
+
+    onScreen.mockClear();
+    tracker.start();
+    await settle();
+
+    expect(onScreen).toHaveBeenCalledTimes(1);
   });
 
   describe('screenNameProvider', () => {

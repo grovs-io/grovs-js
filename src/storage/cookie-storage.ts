@@ -49,7 +49,11 @@ export class CookieStorage implements Storage {
       `${key}=${encodeURIComponent(value)}`,
       `expires=${FAR_FUTURE}`,
       'path=/',
+      // Not Strict: the identifier must survive a Grovs link's cross-site redirect.
+      'SameSite=Lax',
     ];
+    // Secure on http is refused outright, which would break local development.
+    if (this.doc.location?.protocol === 'https:') parts.push('Secure');
     // Spec T11: v1 wrote no domain attribute, so the cookie was host-only.
     // Auto-detecting the registrable domain needs the Public Suffix List,
     // which the bundle budget rules out — the integrator opts in instead.

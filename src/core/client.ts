@@ -281,6 +281,7 @@ export class GrovsClient {
     // call was supposed to erase.
     pendingConsentStore = null;
     this.context.reset();
+    this.custom.resetDedup();
     this.pipelineStarted = false;
     this.identityDirty = false;
     // aliasesDirty deliberately survives: the alias map is integrator

@@ -12,6 +12,16 @@ export const SCREEN_VIEW_EVENT = 'screen_view';
 /** Matches the same-name dedup window in CustomEventsHandler on iOS. */
 const SCREEN_DEDUP_MS = 1000;
 
+// Shared across clients: a reconfigure's fresh handler re-reported the same screen (T9).
+let lastScreenName: string | null = null;
+let lastScreenAt = 0;
+
+/** Test seam: the dedup outlives individual handlers. */
+export function __resetScreenDedup(): void {
+  lastScreenName = null;
+  lastScreenAt = 0;
+}
+
 export interface CustomEventsDeps {
   events: EventsHandler;
   session: SessionManager;
@@ -28,8 +38,6 @@ export interface CustomEventsDeps {
  */
 export class CustomEventsHandler {
   private globalTags: string[] | null = null;
-  private lastScreenName: string | null = null;
-  private lastScreenAt = 0;
   /** Stamped onto custom events so they can be segmented by screen. */
   private currentScreenName: string | null = null;
 
@@ -81,12 +89,15 @@ export class CustomEventsHandler {
 
     if (this.deps.session.rotateIfIdle()) this.resetDedup();
 
-    const now = this.deps.clock.now();
-    if (this.lastScreenName === trimmed && now - this.lastScreenAt < SCREEN_DEDUP_MS) return;
-
-    this.lastScreenName = trimmed;
-    this.lastScreenAt = now;
+    // Set before the dedup returns, or a deduped view leaves later custom
+    // events with no screen context.
     this.currentScreenName = trimmed;
+
+    const now = this.deps.clock.now();
+    if (lastScreenName === trimmed && now - lastScreenAt < SCREEN_DEDUP_MS) return;
+
+    lastScreenName = trimmed;
+    lastScreenAt = now;
 
     this.enqueue(SCREEN_VIEW_EVENT, { ...properties, screen_name: trimmed });
   }
@@ -96,8 +107,7 @@ export class CustomEventsHandler {
   }
 
   resetDedup(): void {
-    this.lastScreenName = null;
-    this.lastScreenAt = 0;
+    __resetScreenDedup();
   }
 
   private enqueue(
