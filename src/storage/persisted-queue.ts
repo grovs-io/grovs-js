@@ -161,10 +161,11 @@ export class PersistedQueue {
   private persist(): void {
     if (this.frozen) return;
     try {
-      this.storage.set(QUEUE_STORAGE_KEY, JSON.stringify(this.events));
-      this.dirty = false;
+      // Stays dirty when the store refused the write, so pagehide retries
+      // instead of short-circuiting on a write that never landed.
+      this.dirty = !this.storage.set(QUEUE_STORAGE_KEY, JSON.stringify(this.events));
     } catch {
-      /* quota or serialization failure — memory stays authoritative */
+      /* the queue could not be serialized — memory stays authoritative */
     }
   }
 

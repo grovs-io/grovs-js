@@ -44,7 +44,7 @@ export class CookieStorage implements Storage {
     return null;
   }
 
-  set(key: string, value: string): void {
+  set(key: string, value: string): boolean {
     const parts = [
       `${key}=${encodeURIComponent(value)}`,
       `expires=${FAR_FUTURE}`,
@@ -59,6 +59,9 @@ export class CookieStorage implements Storage {
     // which the bundle budget rules out — the integrator opts in instead.
     if (this.domain) parts.push(`domain=${this.domain}`);
     this.doc.cookie = parts.join(';');
+    // Assignment never throws, so a read-back is the only way to see a cookie
+    // the browser refused — an oversized value or a mismatched domain.
+    return this.get(key) === value;
   }
 
   remove(key: string): void {

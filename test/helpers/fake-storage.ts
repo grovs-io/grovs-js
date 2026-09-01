@@ -10,9 +10,10 @@ export class FakeStorage implements Storage {
     return this.map.get(key) ?? null;
   }
 
-  set(key: string, value: string): void {
-    if (this.failWrites) return;
+  set(key: string, value: string): boolean {
+    if (this.failWrites) return false;
     this.map.set(key, value);
+    return true;
   }
 
   remove(key: string): void {

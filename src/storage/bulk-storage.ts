@@ -47,8 +47,8 @@ export class SwitchableStorage implements Storage {
     return this.target.get(key);
   }
 
-  set(key: string, value: string): void {
-    this.target.set(key, value);
+  set(key: string, value: string): boolean {
+    return this.target.set(key, value);
   }
 
   remove(key: string): void {

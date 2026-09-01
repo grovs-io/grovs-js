@@ -4,6 +4,9 @@ import { MemoryStorage } from '../../src/storage/memory-storage';
 import { LocalStorageAdapter } from '../../src/storage/local-storage';
 import { Logger } from '../../src/logging/logger';
 import { GrovsError } from '../../src/net/errors';
+import { PersistedQueue, QUEUE_STORAGE_KEY } from '../../src/storage/persisted-queue';
+import { FakeStorage } from '../helpers/fake-storage';
+import { FakeClock } from '../helpers/fake-clock';
 
 describe('MemoryStorage', () => {
   it('round-trips and removes values', () => {
@@ -34,6 +37,28 @@ describe('LocalStorageAdapter', () => {
     });
     expect(s.get('k')).toBeNull();
     vi.restoreAllMocks();
+  });
+});
+
+describe('PersistedQueue write failures', () => {
+  it('stays dirty when the store refuses the write, and retries on pagehide', () => {
+    vi.useFakeTimers();
+    const storage = new FakeStorage();
+    const queue = new PersistedQueue(storage, new FakeClock());
+
+    storage.failWrites = true;
+    queue.add({ id: 'a', event: 'app_open', createdAt: 1, sessionId: 's' });
+    vi.advanceTimersByTime(1100);
+    expect(storage.get(QUEUE_STORAGE_KEY)).toBeNull();
+
+    // Whatever blocked the write has cleared.
+    storage.failWrites = false;
+    queue.flushToStorage();
+
+    const persisted = storage.get(QUEUE_STORAGE_KEY);
+    expect(persisted).not.toBeNull();
+    expect(persisted).toContain('app_open');
+    vi.useRealTimers();
   });
 });
 
@@ -73,6 +98,22 @@ describe('CookieStorage', () => {
     const s = new CookieStorage(doc);
     s.set('k', 'v');
     expect(doc.cookie).not.toContain('domain=');
+  });
+
+  it('reports success by reading the value back', () => {
+    expect(new CookieStorage(document).set('grovs_ok', 'v')).toBe(true);
+  });
+
+  it('reports failure when the browser refuses the cookie', () => {
+    const doc = {
+      get cookie() {
+        return '';
+      },
+      set cookie(_value: string) {
+        /* refused, as for an oversized value or a mismatched domain */
+      },
+    } as Document;
+    expect(new CookieStorage(doc).set('k', 'v')).toBe(false);
   });
 
   it('expires the cookie on remove', () => {

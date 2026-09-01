@@ -17,11 +17,16 @@ export class LocalStorageAdapter implements Storage {
     }
   }
 
-  set(key: string, value: string): void {
+  set(key: string, value: string): boolean {
     try {
-      getLocalStorage()?.setItem(key, value);
+      const store = getLocalStorage();
+      if (!store) return false;
+      store.setItem(key, value);
+      return true;
     } catch {
-      /* storage full or blocked — the caller cannot act on this */
+      // Full, blocked, or private mode. Reported rather than swallowed: the
+      // queue keeps its dirty flag set and retries on pagehide.
+      return false;
     }
   }
 

@@ -7,8 +7,9 @@ export class MemoryStorage implements Storage {
     return this.map.get(key) ?? null;
   }
 
-  set(key: string, value: string): void {
+  set(key: string, value: string): boolean {
     this.map.set(key, value);
+    return true;
   }
 
   remove(key: string): void {
