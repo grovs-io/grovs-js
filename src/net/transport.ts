@@ -6,6 +6,13 @@ export interface TransportRequest {
   /** Set for the pagehide flush in Phase 1. Browsers cap all in-flight
    *  keepalive bodies at 64 KB combined (spec Translations). */
   keepalive?: boolean;
+  /**
+   * Asked before every retry. The first attempt cannot be recalled, but the
+   * two behind it can: consent withdrawn mid-batch would otherwise keep
+   * re-sending the same events and the same visitor id for another two
+   * attempts, after the SDK was told to stop.
+   */
+  abandon?: () => boolean;
 }
 
 export interface TransportResponse {

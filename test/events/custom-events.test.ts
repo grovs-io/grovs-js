@@ -323,3 +323,38 @@ describe('CustomEventsHandler global tags', () => {
     expect(queue.all()[0]?.tags).toBeUndefined();
   });
 });
+
+describe('a throwing getter costs its key, not the caller', () => {
+  function withThrowingGetter(): Record<string, unknown> {
+    const properties: Record<string, unknown> = { kept: 'yes' };
+    Object.defineProperty(properties, 'boom', {
+      enumerable: true,
+      get() {
+        throw new Error('property getter threw');
+      },
+    });
+    return properties;
+  }
+
+  // Screen context was merged in with a spread *before* sanitizing, and a
+  // spread reads every value — so once any screen had been tracked, which
+  // happens automatically by default, the throw escaped into track().
+  it('does not throw out of track() after a screen view', () => {
+    const { custom, queue } = harness();
+    custom.trackScreenView('Home');
+
+    expect(() => custom.track('checkout', withThrowingGetter())).not.toThrow();
+
+    const event = queue.all().find((e) => e.eventName === 'checkout');
+    expect(event?.properties).toEqual({ kept: 'yes', screen_name: 'Home' });
+  });
+
+  it('does not throw out of trackScreenView() either', () => {
+    const { custom, queue } = harness();
+
+    expect(() => custom.trackScreenView('Cart', withThrowingGetter())).not.toThrow();
+
+    const event = queue.all().find((e) => e.eventName === 'screen_view');
+    expect(event?.properties).toEqual({ kept: 'yes', screen_name: 'Cart' });
+  });
+});

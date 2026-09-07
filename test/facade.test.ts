@@ -114,6 +114,33 @@ describe('public facade', () => {
     expect(queued.map((event) => event.eventName)).toContain('from_client_a');
   });
 
+  // The open list belongs to the visitor being cleared: its rows still open
+  // that visitor's messages, and the iframe fetches them without the SDK.
+  it('closes an open messages list on reset and on disable', async () => {
+    document.body.innerHTML = '';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ linksquared: 'v-1', notifications: [] }), { status: 200 }),
+      ),
+    );
+
+    await Grovs.configure({ apiKey: 'k' });
+    await Grovs.showMessagesList();
+    expect(document.getElementById('Grovs-modal')).not.toBeNull();
+
+    Grovs.reset();
+    expect(document.getElementById('Grovs-modal')).toBeNull();
+
+    await Grovs.showMessagesList();
+    expect(document.getElementById('Grovs-modal')).not.toBeNull();
+
+    Grovs.setEnabled(false);
+    expect(document.getElementById('Grovs-modal')).toBeNull();
+    Grovs.setEnabled(true);
+  });
+
   // Spec T9. React strict mode and hot reload both configure twice; the
   // replacement's handler is new, so only shared dedup state can catch it.
   it('emits one screen view across a double configure', async () => {

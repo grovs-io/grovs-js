@@ -69,6 +69,13 @@ export function resolveTheme(
     const value = theme[token];
     if (value === undefined || value === null || value === '') continue;
     const text = String(value);
+    // CSS.supports('z-index', 'auto') is true, and `auto` drops the modal
+    // behind any positioned content on the page — so the probe below cannot
+    // be what rejects it.
+    if (token === 'zIndex' && !Number.isInteger(Number(text))) {
+      warn(`messagesTheme.zIndex "${text}" is not an integer and was ignored.`);
+      continue;
+    }
     // Interpolated into the stylesheet; delimiters smuggle rules, '/*' eats the rest of it.
     if (/[;{}]|\/\*/.test(text)) {
       warn(`messagesTheme.${token} contains CSS delimiters and was ignored.`);
@@ -123,15 +130,19 @@ export function buildStylesheet(theme: ResolvedMessagesTheme): string {
     .map(([property, value]) => `  ${property}: ${value};`)
     .join('\n');
 
+  // Repeated into every mode block rather than emitted once at bare :host.
+  // The dark rules are :host(<selector>), which outranks a plain :host on
+  // specificity, so a single override block loses in dark mode however late it
+  // appears — the configured colors would apply in light mode and be silently
+  // ignored in dark.
+  const overrides = overrideLines === '' ? '' : `\n${overrideLines}\n`;
+
   return `
-:host { ${LIGHT} ${SHARED} }
+:host { ${LIGHT} ${SHARED}${overrides} }
 @media (prefers-color-scheme: dark) {
-  :host(:not([data-grovs-mode="light"])) { ${DARK} }
+  :host(:not([data-grovs-mode="light"])) { ${DARK}${overrides} }
 }
-:host([data-grovs-mode="dark"]) { ${DARK} }
-:host {
-${overrideLines}
-}
+:host([data-grovs-mode="dark"]) { ${DARK}${overrides} }
 
 .grovs-backdrop, .grovs-backdrop * { box-sizing: border-box; }
 .grovs-backdrop {

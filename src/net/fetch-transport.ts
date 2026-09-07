@@ -25,8 +25,18 @@ export class FetchTransport implements Transport {
     let last: TransportResponse = { ok: false, status: 0, body: null };
 
     for (let attempt = 0; attempt < attempts; attempt += 1) {
-      last = await this.attempt(req);
+      const outcome = await this.attempt(req);
+      last = outcome.response;
       if (last.ok || !isRetryable(last.status)) return last;
+
+      // Our own timeout, not a refused connection: the server may well have
+      // processed the request. Every caller here POSTs, so a retry risks a
+      // second purchase or a second link. Events lose nothing — they stay
+      // queued for the next tick.
+      if (outcome.timedOut) return last;
+
+      // Consent withdrawn, or the client retired, since the attempt started.
+      if (req.abandon?.()) return last;
 
       if (attempt < attempts - 1) {
         // Exponential backoff with full jitter: without the jitter, every tab
@@ -34,13 +44,20 @@ export class FetchTransport implements Transport {
         // caused the failure.
         const ceiling = BASE_BACKOFF_MS * 2 ** attempt;
         await new Promise((resolve) => setTimeout(resolve, Math.random() * ceiling));
+
+        // Asked again on the far side of the wait: the backoff is most of the
+        // window, so a consent withdrawal during it would otherwise be
+        // followed by the very request it revoked.
+        if (req.abandon?.()) return last;
       }
     }
 
     return last;
   }
 
-  private async attempt(req: TransportRequest): Promise<TransportResponse> {
+  private async attempt(
+    req: TransportRequest,
+  ): Promise<{ response: TransportResponse; timedOut: boolean }> {
     const init: RequestInit = {
       method: req.method,
       headers: req.headers,
@@ -53,9 +70,13 @@ export class FetchTransport implements Transport {
     // A request with no timeout can hang for the tab's lifetime, and the
     // events handler's `sending` guard means one hung request blocks the queue
     // permanently.
+    let timedOut = false;
     const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
     const timer = controller
-      ? setTimeout(() => controller.abort(), TIMEOUT_MS)
+      ? setTimeout(() => {
+          timedOut = true;
+          controller.abort();
+        }, TIMEOUT_MS)
       : null;
     if (controller) init.signal = controller.signal;
 
@@ -65,16 +86,24 @@ export class FetchTransport implements Transport {
       // The body read stays inside the timeout: a server that answers headers
       // promptly and then trickles the body would otherwise hang past it.
       let body: unknown = null;
+      let unreadable = false;
       try {
         const text = await response.text();
         body = text ? (JSON.parse(text) as unknown) : null;
       } catch {
-        body = null;
+        unreadable = true;
       }
 
-      return { ok: response.ok, status: response.status, body };
+      // A 200 nobody could read is not a success: the events handler would
+      // drop the batch as accepted and configure() would report an identity it
+      // never received. Not retried — the server did process it.
+      if (unreadable && response.ok) {
+        return { response: { ok: false, status: response.status, body: null }, timedOut };
+      }
+
+      return { response: { ok: response.ok, status: response.status, body }, timedOut };
     } catch {
-      return { ok: false, status: 0, body: null };
+      return { response: { ok: false, status: 0, body: null }, timedOut };
     } finally {
       if (timer !== null) clearTimeout(timer);
     }

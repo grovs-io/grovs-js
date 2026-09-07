@@ -8,6 +8,27 @@ export type ScreenNameProvider = (url: URL) => ScreenNameDecision;
 /** Marks our patch so a second configure() cannot install a second one. */
 const PATCH_MARKER = Symbol.for('grovs.historyPatch');
 
+/**
+ * The tracker the installed patch reports to, or null when the patch is
+ * orphaned — installed but owned by nobody.
+ *
+ * A retired client cannot always uninstall: when another library wrapped
+ * History after us, restoring would clobber theirs, so the patch stays. The
+ * marker alone then tells the replacement client "already patched" and it
+ * refuses to install, while the tracker the patch actually calls is disabled —
+ * SPA tracking silently stops for the rest of the page's life. Ownership is
+ * what distinguishes a live owner from a retired one.
+ */
+interface PatchOwnership {
+  notify: () => void;
+}
+let patchOwner: PatchOwnership | null = null;
+
+/** Test seam: module-level, so it would otherwise leak between tests. */
+export function __resetPatchOwner(): void {
+  patchOwner = null;
+}
+
 interface PatchedFn {
   [PATCH_MARKER]?: boolean;
 }
@@ -45,6 +66,9 @@ export class AutoScreenTracker {
   private frameIsTimeout = false;
 
   screenNameProvider: ScreenNameProvider | null = null;
+  /** This tracker's identity in the module-level ownership above, and the way
+   *  the installed patch reaches it. */
+  private readonly ownership: PatchOwnership = { notify: () => this.scheduleTrack() };
 
   constructor(private readonly deps: AutoScreenTrackerDeps) {}
 
@@ -53,8 +77,13 @@ export class AutoScreenTracker {
     if (!win) return;
 
     this.enabled = true;
-    // Already patched, but re-entry still owes the caller the current screen.
+    // stop() detaches the listeners and releases ownership even when the patch
+    // has to stay installed, so re-entry owes the caller all three: the
+    // listeners, the ownership the patch reports through, and the current
+    // screen. `??=` so a live owner is never displaced.
     if (this.installed) {
+      patchOwner ??= this.ownership;
+      this.attachListeners(win);
       this.trackCurrent();
       return;
     }
@@ -65,6 +94,14 @@ export class AutoScreenTracker {
     // Guard: someone else's patch is fine to chain onto, but ours is not.
     if (push[PATCH_MARKER]) {
       this.installed = true;
+      if (patchOwner === null) {
+        // Orphaned by a client that could not uninstall it: adopt it, or the
+        // page keeps a patch that reports to nobody.
+        patchOwner = this.ownership;
+        this.attachListeners(win);
+      }
+      // Otherwise a live owner keeps it: two clients on one page is
+      // unsupported (docs/CONTEXT.md), and the second reports only this screen.
       this.trackCurrent();
       return;
     }
@@ -75,20 +112,34 @@ export class AutoScreenTracker {
     // Arrow functions over the captured `history`, rather than relying on the
     // dynamic `this` of the call site. Chain first in both: the host's
     // navigation must happen even if our tracking throws.
+    // Through the owner, not `this`: the patch outlives the tracker that
+    // installed it whenever another library wrapped History after us.
     const patchedPush = ((...args: Parameters<History['pushState']>): void => {
       this.originalPushState?.apply(history, args);
-      this.scheduleTrack();
+      patchOwner?.notify();
     }) as History['pushState'] & PatchedFn;
     patchedPush[PATCH_MARKER] = true;
 
     const patchedReplace = ((...args: Parameters<History['replaceState']>): void => {
       this.originalReplaceState?.apply(history, args);
-      this.scheduleTrack();
+      patchOwner?.notify();
     }) as History['replaceState'] & PatchedFn;
     patchedReplace[PATCH_MARKER] = true;
 
     history.pushState = patchedPush;
     history.replaceState = patchedReplace;
+
+    this.attachListeners(win);
+
+    this.installed = true;
+    patchOwner = this.ownership;
+    this.trackCurrent();
+  }
+
+  /** Back, Forward and fragment navigation arrive as events, not through the
+   *  patched History methods. Idempotent, so re-entry is safe. */
+  private attachListeners(win: Window): void {
+    if (this.listeners.length > 0) return;
 
     const onPopState = (): void => this.scheduleTrack();
     const onHashChange = (): void => this.scheduleTrack();
@@ -98,9 +149,6 @@ export class AutoScreenTracker {
       () => win.removeEventListener('popstate', onPopState),
       () => win.removeEventListener('hashchange', onHashChange),
     );
-
-    this.installed = true;
-    this.trackCurrent();
   }
 
   /**
@@ -112,6 +160,9 @@ export class AutoScreenTracker {
    */
   stop(): void {
     this.enabled = false;
+    // Release it whether or not the patch can come out: a replacement client
+    // adopts what this one leaves behind.
+    if (patchOwner === this.ownership) patchOwner = null;
 
     const win = getWindow();
     if (!win || !this.installed) return;
@@ -121,8 +172,16 @@ export class AutoScreenTracker {
     for (const remove of this.listeners) remove();
     this.listeners = [];
 
-    const current = win.history.pushState as History['pushState'] & PatchedFn;
-    if (current[PATCH_MARKER] && this.originalPushState && this.originalReplaceState) {
+    // Both, not just pushState: a library that wrapped replaceState after us
+    // is uninstalled by restoring the original over its wrapper.
+    const push = win.history.pushState as History['pushState'] & PatchedFn;
+    const replace = win.history.replaceState as History['replaceState'] & PatchedFn;
+    if (
+      push[PATCH_MARKER] &&
+      replace[PATCH_MARKER] &&
+      this.originalPushState &&
+      this.originalReplaceState
+    ) {
       win.history.pushState = this.originalPushState;
       win.history.replaceState = this.originalReplaceState;
       this.installed = false;

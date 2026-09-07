@@ -22,14 +22,30 @@ export class MessagesService {
     return this.client.isActive() && this.client.isEnabled && this.client.isAuthenticated();
   }
 
+  /**
+   * Captures the lifecycle counter, so a response can be checked against the
+   * identity that asked for it.
+   *
+   * `usable` alone is not enough: reset() makes it false, and authenticating
+   * as the next visitor makes it true again — so a request started for visitor
+   * A could be validated by visitor B's authentication and rendered into B's
+   * list.
+   */
+  private inFlightGuard(): () => boolean {
+    const generation = this.client.lifecycleGeneration;
+    return () => this.usable && this.client.lifecycleGeneration === generation;
+  }
+
   /** Distinguishes "no messages" from "request failed", which the array
    *  return cannot. The v1 shim needs the difference for its error callback. */
   async fetchMessages(page: number): Promise<GrovsMessage[] | null> {
     if (!this.usable) return null;
+    const valid = this.inFlightGuard();
     const response = await this.client.service.messagesForDevice(page);
-    // Re-check after the await, as automatic display does: a response that
-    // arrives after setEnabled(false) or reset() must not reach the UI.
-    if (!this.usable) return null;
+    // Re-check after the await: a response that arrives after setEnabled(false)
+    // or reset() must not reach the UI, and one that arrives after a *new*
+    // visitor authenticated must not reach theirs.
+    if (!valid()) return null;
     if (!response.ok) {
       this.client.log.reportError(
         GrovsError.networkRequestFailed,
@@ -42,8 +58,9 @@ export class MessagesService {
 
   async fetchUnreadCount(): Promise<number | null> {
     if (!this.usable) return null;
+    const valid = this.inFlightGuard();
     const response = await this.client.service.numberOfUnreadMessages();
-    if (!this.usable) return null;
+    if (!valid()) return null;
     if (!response.ok) {
       this.client.log.reportError(
         GrovsError.networkRequestFailed,
@@ -82,11 +99,13 @@ export class MessagesService {
    *  (grovs_manager.js:229-242). iOS ships it working. */
   async messagesForAutomaticDisplay(): Promise<GrovsMessage[]> {
     if (!this.usable) return [];
+    const valid = this.inFlightGuard();
     const response = await this.client.service.messagesForAutomaticDisplay();
     if (!response.ok) return [];
     // Re-check after the await: setEnabled(false) during the request would
-    // otherwise still pop modals onto a page that asked the SDK to stop.
-    if (!this.usable) return [];
+    // otherwise still pop modals onto a page that asked the SDK to stop, and a
+    // late response must not open the previous visitor's messages.
+    if (!valid()) return [];
     return this.readNotifications(response.body);
   }
 

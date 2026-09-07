@@ -9,6 +9,8 @@ export interface LifecycleDeps {
   onExit: () => void;
   /** A normal flush, for a tab switch the user may well come back from. */
   onHide: () => void;
+  /** Returning to the tab. Refreshes the shared session stamp. */
+  onForeground?: () => void;
 }
 
 /**
@@ -44,6 +46,11 @@ export class LifecycleTracker {
         this.deps.onHide();
       } else {
         this.visibleSince = this.deps.clock.now();
+        // The session stamp is only written when an event is queued, so a tab
+        // left hidden for 29 minutes carries a 29-minute-old one. Without
+        // refreshing it here, the next hide reads it as stale and rotates —
+        // filing the engagement that just happened under a new session.
+        this.deps.onForeground?.();
       }
     };
 

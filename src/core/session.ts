@@ -9,6 +9,18 @@ export const SESSION_ACTIVITY_KEY = 'grovs_session_activity';
 const IDLE_TIMEOUT_MS = 30 * 60_000;
 
 /**
+ * Whether `storage` holds a session still inside the idle window.
+ *
+ * Consent migration needs this before it copies: another tab may be mid-visit
+ * on the durable store, and replacing its session id splits that visit in two.
+ */
+export function hasActiveSession(storage: Storage, now: number): boolean {
+  if (!storage.get(SESSION_ID_KEY)) return false;
+  const last = Number(storage.get(SESSION_ACTIVITY_KEY));
+  return Number.isFinite(last) && now - last <= IDLE_TIMEOUT_MS;
+}
+
+/**
  * A session is a person, not a tab (spec A6).
  *
  * iOS ports a single-process assumption: one app, one session, rotated when

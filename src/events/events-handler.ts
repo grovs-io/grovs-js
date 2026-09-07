@@ -8,6 +8,7 @@ import { GrovsError } from '../net/errors';
 import type { PersistedQueue } from '../storage/persisted-queue';
 import { enrich } from './enrich';
 import { isSystemEvent, type QueuedEvent } from './event';
+import { byteLength } from './sanitize';
 
 /**
  * Cadence is iOS's, not an implementer's choice. These two numbers determine
@@ -27,6 +28,9 @@ const MAX_BATCH_SIZE = 50;
  */
 const KEEPALIVE_BUDGET_BYTES = 60 * 1024;
 
+/** `{"events":[]}` — the wrapper counts against the same cap the bodies do. */
+const KEEPALIVE_ENVELOPE_BYTES = 13;
+
 export interface EventsHandlerDeps {
   api: ApiService;
   queue: PersistedQueue;
@@ -39,6 +43,9 @@ export interface EventsHandlerDeps {
   /** False once the owning client is retired. Freezing the queue stops a late
    *  write; this stops the loop issuing further requests after retirement. */
   isActive?: () => boolean;
+  /** False while consent is pending or withdrawn, and before authentication.
+   *  Gates transmission only: consent mode keeps queueing what it cannot send. */
+  canTransmit?: () => boolean;
 }
 
 /**
@@ -51,11 +58,12 @@ export interface EventsHandlerDeps {
 export class EventsHandler {
   private timer: ReturnType<typeof setInterval> | null = null;
   private leewayTimer: ReturnType<typeof setTimeout> | null = null;
-  private sending = false;
+  /** The drain in progress. Concurrent callers await it rather than being
+   *  told the queue is busy — see flush(). */
+  private draining: Promise<void> | null = null;
   /** Set once the payload lookup resolves, so events are not sent before their
    *  attribution path is known. Mirrors hasFetchedPayloadLink on iOS. */
   private pathResolved = false;
-
   constructor(private readonly deps: EventsHandlerDeps) {}
 
   /**
@@ -107,42 +115,67 @@ export class EventsHandler {
   }
 
   /**
-   * Called once the deep link payload resolves. Back-fills the path onto
-   * everything queued before it was known, then unblocks sending.
+   * Called once the deep link payload resolves. Back-fills the path onto this
+   * session's events queued before it was known, then unblocks sending.
+   *
+   * Scoped to the session because the queue survives reloads for seven days:
+   * back-filling everything stamps today's campaign onto a direct visit from
+   * yesterday. The session is the SDK's own unit of a visit, and it outlives a
+   * client the way the queue does — a second configure() before consent lands
+   * must not move the boundary.
    */
   onPathResolved(path: string | null): void {
     if (path) {
-      this.deps.queue.transform((event) => (event.path ? event : { ...event, path }));
+      const session = this.deps.session.currentSessionId();
+      this.deps.queue.transform((event) =>
+        event.path || event.sessionId !== session ? event : { ...event, path },
+      );
     }
     this.pathResolved = true;
   }
 
-  private active(): boolean {
-    return this.deps.isEnabled() && (this.deps.isActive?.() ?? true);
+  /** Withdraws the permission to send that configure() granted. */
+  resetDelivery(): void {
+    this.pathResolved = false;
   }
 
-  async flush(): Promise<void> {
-    if (!this.pathResolved || this.sending || !this.active()) return;
+  private active(): boolean {
+    return (
+      this.deps.isEnabled() &&
+      (this.deps.isActive?.() ?? true) &&
+      (this.deps.canTransmit?.() ?? true)
+    );
+  }
 
+  /** Drains the queue, returning when it has drained. Concurrent callers await
+   *  the same drain — `await Grovs.flush()` is documented as waiting for
+   *  delivery, including when the interval tick got there first. */
+  flush(): Promise<void> {
+    if (this.draining) return this.draining;
+    if (!this.pathResolved || !this.active()) return Promise.resolve();
+
+    const drain = this.drain().finally(() => {
+      this.draining = null;
+    });
+    this.draining = drain;
+    return drain;
+  }
+
+  private async drain(): Promise<void> {
     const pending = this.deps.queue.pruneStale();
     if (pending.length === 0) return;
 
-    this.sending = true;
-    try {
-      // Drain rather than send one batch: a queue of 300 would otherwise take
-      // five minutes to clear at one batch per 30-second tick.
-      let remaining = pending;
-      while (remaining.length > 0) {
-        const sent = await this.sendChunks(remaining.slice(0, MAX_BATCH_SIZE), false);
-        if (!sent) break;
-        // Re-check after the await: a client retired or disabled mid-drain
-        // would otherwise keep transmitting the batches behind the one in
-        // flight, and report their failures against a config that is gone.
-        if (!this.active()) break;
-        remaining = this.deps.queue.all();
-      }
-    } finally {
-      this.sending = false;
+    // Drain rather than send one batch: a queue of 300 would otherwise take
+    // five minutes to clear at one batch per 30-second tick.
+    let remaining = pending;
+    while (remaining.length > 0) {
+      const sent = await this.sendChunks(remaining.slice(0, MAX_BATCH_SIZE), false);
+      if (!sent) break;
+      // Re-check after the await: a client retired or disabled mid-drain
+      // would otherwise keep transmitting the batches behind the one in
+      // flight, and report their failures against a config that is gone.
+      if (!this.active()) break;
+      remaining = this.deps.queue.all();
     }
   }
 
@@ -155,6 +188,24 @@ export class EventsHandler {
   flushOnExit(): void {
     if (!this.deps.isEnabled()) return;
 
+    // Consent pending or withdrawn: the queue still reaches whichever store
+    // consent allows, but nothing leaves the device.
+    if (!(this.deps.canTransmit?.() ?? true)) {
+      this.deps.queue.flushToStorage();
+      return;
+    }
+
+    // Deliberately not filtered by what the drain already has in flight. A tab
+    // close fires visibilitychange first, so the ordinary request carrying
+    // time_spent is usually cancelled by the navigation that follows, and
+    // skipping those events here loses the one event that cannot be re-sent —
+    // the session it measures is over.
+    //
+    // So the exit path is at-least-once *by design*: this batch, and the one
+    // below whose acknowledgement cannot arrive after unload, can both be
+    // delivered twice. event_id makes them dedupable and spec B11 plans the
+    // dedup, but it is not shipped — read this as a chosen double count, not
+    // as a guarantee that something else removes it.
     const pending = this.deps.queue.all();
     if (pending.length === 0) {
       this.deps.queue.flushToStorage();
@@ -168,7 +219,9 @@ export class EventsHandler {
 
     const batch: QueuedEvent[] = [];
     const bodies: unknown[] = [];
-    let bytes = 0;
+    // UTF-8 bytes of the whole request, as the browser measures it —
+    // String.length counts UTF-16 code units and undercounts CJK threefold.
+    let bytes = KEEPALIVE_ENVELOPE_BYTES;
 
     for (const event of ordered.slice(0, MAX_BATCH_SIZE)) {
       let body: unknown;
@@ -177,7 +230,7 @@ export class EventsHandler {
       } catch {
         continue;
       }
-      const size = JSON.stringify(body).length;
+      const size = byteLength(JSON.stringify(body)) + (bodies.length > 0 ? 1 : 0);
       if (bytes + size > KEEPALIVE_BUDGET_BYTES) break;
       bytes += size;
       batch.push(event);

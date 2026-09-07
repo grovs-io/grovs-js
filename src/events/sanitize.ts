@@ -78,7 +78,7 @@ export function sanitizeProperties(
  * the backend then fails, which is the failure the local check exists to
  * prevent.
  */
-function byteLength(value: string): number {
+export function byteLength(value: string): number {
   if (typeof TextEncoder !== 'undefined') return new TextEncoder().encode(value).length;
   return unescape(encodeURIComponent(value)).length;
 }

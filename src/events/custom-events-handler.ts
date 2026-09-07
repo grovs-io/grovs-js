@@ -99,7 +99,9 @@ export class CustomEventsHandler {
     lastScreenName = trimmed;
     lastScreenAt = now;
 
-    this.enqueue(SCREEN_VIEW_EVENT, { ...properties, screen_name: trimmed });
+    // Passed separately, not spread in: a spread reads every value, and a
+    // throwing getter must cost its key rather than the caller's call.
+    this.enqueue(SCREEN_VIEW_EVENT, properties, undefined, { screen_name: trimmed });
   }
 
   setGlobalTags(tags: string[] | null): void {
@@ -114,11 +116,18 @@ export class CustomEventsHandler {
     eventName: string,
     properties?: Record<string, unknown>,
     tags?: string[],
+    extra?: Record<string, string>,
   ): void {
-    const sanitized = sanitizeProperties(
-      this.withScreenContext(eventName, properties),
-      this.deps.logger,
-    );
+    // Sanitized before the merge, never after: merging means spreading, and a
+    // spread reads every value.
+    const base = sanitizeProperties(properties, this.deps.logger);
+    const context = extra ?? this.screenContext(eventName);
+    // The second pass re-applies the 8 KB cap to the merged object. Properties
+    // that only exceed it once the context is added cost the properties, not
+    // the context — a screen view must keep its screen_name either way.
+    const sanitized = context
+      ? (sanitizeProperties({ ...base, ...context }, this.deps.logger) ?? context)
+      : base;
 
     const event: QueuedEvent = {
       id: randomUUID(),
@@ -138,13 +147,10 @@ export class CustomEventsHandler {
   }
 
   /** Custom events carry the most recently viewed screen, matching iOS. */
-  private withScreenContext(
-    eventName: string,
-    properties?: Record<string, unknown>,
-  ): Record<string, unknown> | undefined {
-    if (eventName === SCREEN_VIEW_EVENT) return properties;
-    if (!this.currentScreenName) return properties;
-    return { ...properties, screen_name: this.currentScreenName };
+  private screenContext(eventName: string): Record<string, string> | undefined {
+    if (eventName === SCREEN_VIEW_EVENT) return undefined;
+    if (!this.currentScreenName) return undefined;
+    return { screen_name: this.currentScreenName };
   }
 
   /**

@@ -196,3 +196,101 @@ describe('CookieStorage', () => {
     expect(onError).not.toHaveBeenCalled();
   });
 });
+
+describe('two tabs share one storage key', () => {
+  const event = (id: string, createdAt: number) => ({
+    id,
+    event: 'app_open' as const,
+    createdAt,
+    sessionId: 's',
+  });
+
+  function stored(storage: FakeStorage): string[] {
+    return (JSON.parse(storage.get(QUEUE_STORAGE_KEY) ?? '[]') as { id: string }[]).map(
+      (e) => e.id,
+    );
+  }
+
+  // Each tab holds its own in-memory queue and wrote it wholesale, so the
+  // second tab to persist erased the first tab's offline events — and they
+  // were gone for good once that tab closed.
+  it('keeps both tabs\' events instead of last-writer-wins', () => {
+    const storage = new FakeStorage();
+    const clock = new FakeClock();
+    const tabA = new PersistedQueue(storage, clock);
+    const tabB = new PersistedQueue(storage, clock);
+
+    tabA.add(event('a', clock.now()));
+    tabA.flushToStorage();
+    tabB.add(event('b', clock.now() + 1));
+    tabB.flushToStorage();
+
+    expect(stored(storage)).toEqual(['a', 'b']);
+  });
+
+  // The union must not undo a delivery: the other tab's snapshot still lists
+  // events this tab has since sent and had acknowledged.
+  it('does not resurrect events this tab has already delivered', () => {
+    const storage = new FakeStorage();
+    const clock = new FakeClock();
+    const tabA = new PersistedQueue(storage, clock);
+    const tabB = new PersistedQueue(storage, clock);
+
+    tabA.add(event('a', clock.now()));
+    tabA.flushToStorage();
+    tabB.add(event('b', clock.now() + 1));
+    tabB.flushToStorage();
+
+    tabA.remove(['a']);
+    tabA.flushToStorage();
+
+    expect(stored(storage)).toEqual(['b']);
+  });
+
+  // The cap evicts oldest-first; another tab's snapshot still lists what it
+  // dropped, and the union would hand it straight back.
+  it('does not write back an event the cap evicted', () => {
+    const storage = new FakeStorage();
+    const clock = new FakeClock();
+    storage.set(QUEUE_STORAGE_KEY, JSON.stringify([event('old', clock.now())]));
+    const tab = new PersistedQueue(storage, clock);
+
+    for (let i = 0; i < 1000; i += 1) tab.add(event(`e${i}`, clock.now() + 1 + i));
+    expect(tab.all().map((e) => e.id)).not.toContain('old');
+
+    // Deliver most of them, so the queue is back under the cap and the union
+    // has room to hand the evicted event back.
+    tab.remove(tab.all().slice(1).map((e) => e.id));
+    storage.set(QUEUE_STORAGE_KEY, JSON.stringify([event('old', clock.now())]));
+    tab.flushToStorage();
+
+    expect(stored(storage)).not.toContain('old');
+  });
+
+  it('does not write back an event it pruned as stale', () => {
+    const storage = new FakeStorage();
+    const clock = new FakeClock();
+    storage.set(QUEUE_STORAGE_KEY, JSON.stringify([event('ancient', clock.now())]));
+    const tab = new PersistedQueue(storage, clock);
+
+    clock.advanceDays(8);
+    tab.pruneStale();
+    storage.set(QUEUE_STORAGE_KEY, JSON.stringify([event('ancient', clock.now())]));
+    tab.flushToStorage();
+
+    expect(stored(storage)).toEqual([]);
+  });
+
+  // reset() promises the stored queue is gone; a merging write would read
+  // back exactly what it was called to erase.
+  it('clears the store outright rather than merging on clear()', () => {
+    const storage = new FakeStorage();
+    const clock = new FakeClock();
+    const tab = new PersistedQueue(storage, clock);
+    storage.set(QUEUE_STORAGE_KEY, JSON.stringify([event('other-tab', clock.now())]));
+
+    tab.clear();
+
+    expect(stored(storage)).toEqual([]);
+  });
+});

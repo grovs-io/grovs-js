@@ -8,6 +8,13 @@ export const QUEUE_STORAGE_KEY = 'grovs_events';
 const MAX_AGE_MS = 7 * 24 * 60 * 60_000;
 /** Not on iOS: an offline browser tab can grow localStorage without bound. */
 const MAX_EVENTS = 1000;
+/**
+ * Ids of events this tab has delivered, kept so a merging write does not
+ * resurrect them from a snapshot another tab wrote before we sent them. One
+ * per delivered event, so the cap bounds a long session; a tombstone only has
+ * to outlive the stored snapshot it suppresses.
+ */
+const MAX_TOMBSTONES = MAX_EVENTS;
 /** Memory is authoritative; storage catches up on this cadence. */
 const PERSIST_DEBOUNCE_MS = 1000;
 
@@ -30,6 +37,8 @@ const PERSIST_DEBOUNCE_MS = 1000;
  */
 export class PersistedQueue {
   private events: QueuedEvent[] = [];
+  /** See MAX_TOMBSTONES. Insertion-ordered, so the cap evicts oldest first. */
+  private readonly removedIds = new Set<string>();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private dirty = false;
   /** Set when the owning client is retired. A request already in flight
@@ -62,7 +71,8 @@ export class PersistedQueue {
       // attributing, and time_spent for a session already over is the least
       // useful thing in the queue.
       const overflow = this.events.length - MAX_EVENTS;
-      this.events.splice(0, overflow);
+      const evicted = this.events.splice(0, overflow);
+      this.tombstone(evicted.map((event) => event.id));
       this.onDropped?.(overflow, `queue exceeded ${MAX_EVENTS} events`);
     }
 
@@ -74,6 +84,7 @@ export class PersistedQueue {
     if (ids.length === 0) return;
     const drop = new Set(ids);
     this.events = this.events.filter((event) => !drop.has(event.id));
+    this.tombstone(ids);
     this.schedulePersist();
   }
 
@@ -84,14 +95,20 @@ export class PersistedQueue {
    */
   pruneStale(): QueuedEvent[] {
     const cutoff = this.clock.now() - MAX_AGE_MS;
-    const fresh = this.events.filter((event) => event.createdAt > cutoff);
-    // Callers iterate this; hand out a copy like all() does.
-    const dropped = this.events.length - fresh.length;
-    if (dropped > 0) {
+    const fresh: QueuedEvent[] = [];
+    const expired: string[] = [];
+    for (const event of this.events) {
+      if (event.createdAt > cutoff) fresh.push(event);
+      else expired.push(event.id);
+    }
+
+    if (expired.length > 0) {
+      this.tombstone(expired);
       this.events = fresh;
-      this.onDropped?.(dropped, `older than ${MAX_AGE_MS / (24 * 60 * 60_000)} days`);
+      this.onDropped?.(expired.length, `older than ${MAX_AGE_MS / (24 * 60 * 60_000)} days`);
       this.schedulePersist();
     }
+    // Callers iterate this; hand out a copy like all() does.
     return [...this.events];
   }
 
@@ -140,12 +157,32 @@ export class PersistedQueue {
 
   clear(): void {
     this.events = [];
-    this.flushToStorageForced();
+    // Tombstones deliberately survive: another tab's snapshot still lists
+    // events this tab delivered, and the next merged() would write them back.
+    this.dirty = true;
+    if (this.timer !== null) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    if (this.frozen) return;
+    // A blind write, not the merging one persist() performs: reset() promises
+    // the stored queue is gone, and a union would read back exactly what it
+    // was called to erase.
+    try {
+      this.dirty = !this.storage.set(QUEUE_STORAGE_KEY, '[]');
+    } catch {
+      /* memory stays authoritative */
+    }
   }
 
-  private flushToStorageForced(): void {
-    this.dirty = true;
-    this.flushToStorage();
+  private tombstone(ids: readonly string[]): void {
+    for (const id of ids) this.removedIds.add(id);
+    let excess = this.removedIds.size - MAX_TOMBSTONES;
+    if (excess <= 0) return;
+    for (const id of this.removedIds) {
+      this.removedIds.delete(id);
+      if (--excess === 0) break;
+    }
   }
 
   private schedulePersist(): void {
@@ -163,10 +200,35 @@ export class PersistedQueue {
     try {
       // Stays dirty when the store refused the write, so pagehide retries
       // instead of short-circuiting on a write that never landed.
-      this.dirty = !this.storage.set(QUEUE_STORAGE_KEY, JSON.stringify(this.events));
+      this.dirty = !this.storage.set(QUEUE_STORAGE_KEY, JSON.stringify(this.merged()));
     } catch {
       /* the queue could not be serialized — memory stays authoritative */
     }
+  }
+
+  /**
+   * This tab's queue unioned with whatever is in the store.
+   *
+   * Every tab holds its own in-memory queue against one shared key, so a blind
+   * write is last-writer-wins: a second tab opened mid-visit erases the first
+   * tab's offline events, and they are gone for good once that tab closes.
+   *
+   * Union by id, minus what this tab has already delivered — otherwise a
+   * snapshot another tab wrote before our send resurrects the events it
+   * acknowledged. Their events are written back but deliberately not adopted
+   * into memory: both tabs sending the same event is the backend's dedup
+   * window to absorb (spec A4), losing it is nobody's.
+   */
+  private merged(): QueuedEvent[] {
+    const mine = new Set(this.events.map((event) => event.id));
+    const theirs = this.load().filter(
+      (event) => !mine.has(event.id) && !this.removedIds.has(event.id),
+    );
+    if (theirs.length === 0) return this.events;
+
+    return [...theirs, ...this.events]
+      .sort((left, right) => left.createdAt - right.createdAt)
+      .slice(-MAX_EVENTS);
   }
 
   private load(): QueuedEvent[] {

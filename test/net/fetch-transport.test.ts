@@ -76,6 +76,107 @@ describe('FetchTransport', () => {
     expect(res.body).toBeNull();
   });
 
+  // isRetryable(0) covers refused connections and our own 15 s abort alike.
+  // Every caller POSTs, so retrying an abort risks a second purchase.
+  it('does not retry after its own timeout', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(
+      (_url: string, init: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () => reject(new Error('AbortError')));
+        }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const pending = new FetchTransport().send({
+      method: 'POST',
+      url: 'https://example.com/x',
+      headers: {},
+    });
+    await vi.advanceTimersByTimeAsync(15_000);
+    const res = await pending;
+
+    expect(res.status).toBe(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+
+  // sendChunks drops an accepted batch, and configure() reports authenticated:
+  // both read `ok`, so a 200 nobody could read must not present as success.
+  it('reports a 200 whose body could not be read as a failure', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        text: () => Promise.reject(new Error('aborted mid-body')),
+      })),
+    );
+
+    const res = await new FetchTransport().send({
+      method: 'POST',
+      url: 'https://example.com/x',
+      headers: {},
+    });
+
+    expect(res.ok).toBe(false);
+    expect(res.status).toBe(200);
+    expect(res.body).toBeNull();
+  });
+
+  // The attempt in flight cannot be recalled; the two behind it can. Consent
+  // withdrawn mid-batch used to keep re-sending the same events and the same
+  // visitor id for another two attempts.
+  it('stops retrying when the caller abandons it', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 503 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await new FetchTransport().send({
+      method: 'POST',
+      url: 'https://example.com/x',
+      headers: {},
+      abandon: () => true,
+    });
+
+    expect(res.status).toBe(503);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  // The backoff is most of the window: a withdrawal during it must not be
+  // followed by the very request it revoked.
+  it('re-checks after the backoff, not only before it', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 503 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    let asked = 0;
+    await new FetchTransport().send({
+      method: 'POST',
+      url: 'https://example.com/x',
+      headers: {},
+      // Live when the attempt fails, revoked while the backoff runs.
+      abandon: () => {
+        asked += 1;
+        return asked > 1;
+      },
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('still retries three times when it is not abandoned', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 503 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await new FetchTransport().send({
+      method: 'POST',
+      url: 'https://example.com/x',
+      headers: {},
+      abandon: () => false,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
   it('passes keepalive through', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);

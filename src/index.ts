@@ -94,6 +94,9 @@ const facade = {
 
   setEnabled(enabled: boolean): void {
     if (!client) return notConfigured('setEnabled');
+    // "Disabling stops the SDK, it does not merely mute it" — an open modal
+    // whose rows still open messages is the SDK still running.
+    if (!enabled) ui?.close();
     client.setEnabled(enabled);
   },
 
@@ -192,6 +195,9 @@ const facade = {
   /** Clears stored identifiers, the session and the queued events. */
   reset(): void {
     if (!client) return notConfigured('reset');
+    // The open list belongs to the visitor being cleared: its rows still open
+    // that visitor's messages, and the iframe loads them without the SDK.
+    ui?.close();
     client.reset();
   },
 

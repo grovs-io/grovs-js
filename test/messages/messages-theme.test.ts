@@ -131,3 +131,45 @@ describe('buildStylesheet', () => {
   });
 
 });
+
+describe('zIndex must be a number', () => {
+  // CSS.supports('z-index', 'auto') is true, so the probe cannot reject it —
+  // and `auto` drops the modal behind any positioned content on the page.
+  it('ignores a non-numeric z-index', () => {
+    const warn = vi.fn();
+    const theme = resolveTheme({ zIndex: 'auto' as unknown as number }, warn);
+
+    expect(theme.overrides['--grovs-z']).toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('zIndex'));
+  });
+
+  it('keeps a numeric one', () => {
+    expect(resolveTheme({ zIndex: 5000 }).overrides['--grovs-z']).toBe('5000');
+  });
+});
+
+describe('configured colors survive dark mode', () => {
+  // The dark rules are :host(<selector>), which outranks a bare :host however
+  // late the override block appears — so a configured accent applied in light
+  // mode and was silently ignored in dark.
+  it('repeats the overrides into every mode block', () => {
+    const css = buildStylesheet(resolveTheme({ accentColor: '#e91e63', mode: 'dark' }));
+
+    const darkBlock = css.slice(css.indexOf(':host([data-grovs-mode="dark"])'));
+    const autoDarkBlock = css.slice(
+      css.indexOf(':host(:not([data-grovs-mode="light"]))'),
+      css.indexOf(':host([data-grovs-mode="dark"])'),
+    );
+
+    expect(darkBlock).toContain('--grovs-accent: #e91e63;');
+    expect(autoDarkBlock).toContain('--grovs-accent: #e91e63;');
+    // The override must come after the built-in it replaces.
+    expect(darkBlock.indexOf('--grovs-accent: #e91e63;')).toBeGreaterThan(
+      darkBlock.indexOf('--grovs-accent: #60a5fa;'),
+    );
+  });
+
+  it('emits no empty override lines when nothing is configured', () => {
+    expect(buildStylesheet(resolveTheme())).not.toContain('\n\n\n');
+  });
+});

@@ -82,6 +82,11 @@ export class ApiService {
     private readonly context: Context,
     private readonly transport: Transport,
     private readonly identifierProvider: () => string | null,
+    /**
+     * Builds a fresh abandon predicate per request, so it can close over the
+     * lifecycle as it was when the request left — see TransportRequest.abandon.
+     */
+    private readonly abandonRetries: () => () => boolean = () => () => false,
   ) {}
 
   authenticate(details: DeviceDetails): Promise<TransportResponse> {
@@ -169,6 +174,7 @@ export class ApiService {
       url: this.config.endpoint + PATHS.batchEvents,
       headers: this.headers(),
       body: { events },
+      abandon: this.abandonRetries(),
       ...(keepalive ? { keepalive: true } : {}),
     });
   }
@@ -194,6 +200,7 @@ export class ApiService {
       url: this.config.endpoint + path,
       headers: this.headers(),
       body,
+      abandon: this.abandonRetries(),
     });
   }
 
@@ -202,6 +209,7 @@ export class ApiService {
       method: 'GET',
       url: this.config.endpoint + path,
       headers: this.headers(),
+      abandon: this.abandonRetries(),
     });
   }
 

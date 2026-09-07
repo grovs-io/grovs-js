@@ -8,10 +8,13 @@ import { Context } from '../../src/core/context';
 import { Logger } from '../../src/logging/logger';
 import { GrovsError } from '../../src/net/errors';
 import { FakeTransport } from '../helpers/fake-transport';
+import type { TransportRequest, TransportResponse } from '../../src/net/transport';
 import { FakeStorage } from '../helpers/fake-storage';
 import { FakeClock } from '../helpers/fake-clock';
 
-function harness(options: { path?: string | null; onError?: () => void } = {}) {
+function harness(
+  options: { path?: string | null; onError?: () => void; canTransmit?: () => boolean } = {},
+) {
   const transport = new FakeTransport();
   const storage = new FakeStorage();
   const clock = new FakeClock();
@@ -35,6 +38,7 @@ function harness(options: { path?: string | null; onError?: () => void } = {}) {
     logger,
     currentPath: () => options.path ?? null,
     isEnabled: () => true,
+    ...(options.canTransmit ? { canTransmit: options.canTransmit } : {}),
   });
 
   return { handler, transport, queue, clock, storage, session };
@@ -402,5 +406,201 @@ describe('EventsHandler exit flush', () => {
     handler.flushOnExit();
     expect(queue.size()).toBeGreaterThan(0);
     handler.stop();
+  });
+});
+
+/** Holds every response until released, so two flushes can genuinely overlap. */
+class GatedTransport extends FakeTransport {
+  private gate: Promise<void> = Promise.resolve();
+  private open: (() => void) | null = null;
+
+  block(): void {
+    this.gate = new Promise<void>((resolve) => {
+      this.open = resolve;
+    });
+  }
+
+  release(): void {
+    this.open?.();
+    this.open = null;
+    this.gate = Promise.resolve();
+  }
+
+  override async send(request: TransportRequest): Promise<TransportResponse> {
+    const response = await super.send(request);
+    await this.gate;
+    return response;
+  }
+}
+
+function gatedHarness() {
+  const transport = new GatedTransport();
+  const storage = new FakeStorage();
+  const clock = new FakeClock();
+  const queue = new PersistedQueue(storage, clock);
+  const handler = new EventsHandler({
+    api: new ApiService(resolveConfig({ apiKey: 'k' }), new Context(), transport, () => 'https://x'),
+    queue,
+    session: new SessionManager(storage, clock),
+    clock,
+    logger: new Logger(),
+    currentPath: () => null,
+    isEnabled: () => true,
+  });
+  return { handler, queue, clock, transport };
+}
+
+describe('transmission is gated on more than the enabled flag', () => {
+  // reset() with consent revoked clears the queue and the identity but left
+  // the handler holding its permission to send, so the next tracked event
+  // reached the network after the user withdrew the permission for it.
+  it('sends nothing while consent is withheld, and sends once it is granted', async () => {
+    let allowed = false;
+    const { handler, transport } = harness({ canTransmit: () => allowed });
+    handler.onPathResolved(null);
+    handler.log('app_open');
+
+    await handler.flush();
+    expect(transport.requestsTo('/events/batch')).toHaveLength(0);
+
+    allowed = true;
+    await handler.flush();
+    expect(transport.requestsTo('/events/batch')).toHaveLength(1);
+  });
+
+  it('keeps the exit flush on the device too', () => {
+    const { handler, transport, queue } = harness({ canTransmit: () => false });
+    handler.log('app_open');
+
+    handler.flushOnExit();
+
+    expect(transport.requestsTo('/events/batch')).toHaveLength(0);
+    expect(queue.size()).toBe(1);
+  });
+});
+
+describe('flush() waits for delivery', () => {
+  // Documented for integrators facing a hard navigation. A second caller used
+  // to be told "busy" and get a resolved promise, so the page navigated away
+  // with the batch still in flight.
+  it('makes a concurrent caller await the drain in progress', async () => {
+    const { handler, queue, transport } = gatedHarness();
+    handler.onPathResolved(null);
+    handler.log('app_open');
+
+    transport.block();
+    const first = handler.flush();
+    const second = handler.flush();
+    transport.release();
+
+    await second;
+    expect(queue.size()).toBe(0);
+    await first;
+  });
+
+  it('drains again after the first drain finishes', async () => {
+    const { handler, queue, transport } = gatedHarness();
+    handler.onPathResolved(null);
+    handler.log('app_open');
+    await handler.flush();
+
+    handler.log('time_spent', 5);
+    await handler.flush();
+
+    expect(queue.size()).toBe(0);
+    expect(transport.requestsTo('/events/batch')).toHaveLength(2);
+  });
+});
+
+describe('the exit flush and the drain can overlap', () => {
+  // The reverse — skipping what the drain holds — loses the final time_spent
+  // whenever navigation cancels that ordinary request, and it is the one event
+  // that cannot be re-sent. A duplicate is the backend's dedup window to
+  // absorb; this is the trade the module makes everywhere else.
+  it('sends the terminal batch even while an ordinary drain holds the same events', async () => {
+    const { handler, transport } = gatedHarness();
+    handler.onPathResolved(null);
+    handler.log('time_spent', 12);
+
+    transport.block();
+    const drain = handler.flush();
+    handler.flushOnExit();
+
+    const exit = transport.requestsTo('/events/batch')[1];
+    const events = (exit?.body as { events: Record<string, unknown>[] }).events;
+    expect(events.map((e) => e['event'])).toContain('time_spent');
+    expect(exit?.keepalive).toBe(true);
+    transport.release();
+    await drain;
+  });
+});
+
+describe('the path back-fill belongs to this visit', () => {
+  // The queue survives reloads for seven days. Back-filling everything stamped
+  // today's campaign onto a direct visit from a previous day.
+  it('stamps this session and leaves an earlier session alone', () => {
+    const { handler, queue, clock } = harness();
+
+    queue.add({
+      id: 'yesterday',
+      event: 'app_open',
+      createdAt: clock.now() - 24 * 60 * 60_000,
+      sessionId: 'old-session',
+    });
+    handler.log('app_open');
+
+    handler.onPathResolved('campaign-a');
+
+    const byId = new Map(queue.all().map((event) => [event.id, event]));
+    expect(byId.get('yesterday')?.path).toBeUndefined();
+    expect(queue.all().filter((event) => event.path === 'campaign-a')).toHaveLength(1);
+  });
+
+  // The boundary is the visit, not the handler. A second configure() builds a
+  // replacement whose queue is restored from the store the previous client
+  // wrote — those events are older than this handler and still this visit's.
+  it('stamps an event this session queued before the handler existed', () => {
+    const { handler, queue, clock, session } = harness();
+
+    queue.add({
+      id: 'from-the-previous-client',
+      event: 'app_open',
+      createdAt: clock.now() - 60_000,
+      sessionId: session.currentSessionId(),
+    });
+
+    handler.onPathResolved('campaign-a');
+
+    expect(queue.all()[0]?.path).toBe('campaign-a');
+  });
+});
+
+describe('the exit flush measures the request the browser measures', () => {
+  // String.length counts UTF-16 code units. Ten events of Chinese text passed
+  // a 60 KB check at 40 KB by that measure and left as a 79 KB keepalive
+  // request, which the browser rejects outright — taking the prioritized
+  // system events down with the custom ones.
+  it('keeps a batch of non-ASCII properties inside the keepalive budget', () => {
+    const { handler, queue, clock, transport } = harness();
+    handler.onPathResolved(null);
+
+    for (let i = 0; i < 20; i += 1) {
+      queue.add({
+        id: `e${i}`,
+        eventName: 'purchase',
+        createdAt: clock.now(),
+        sessionId: 's',
+        properties: { note: '订单已确认'.repeat(400) },
+      });
+    }
+
+    handler.flushOnExit();
+
+    const request = transport.requestsTo('/events/batch')[0];
+    const bytes = new TextEncoder().encode(JSON.stringify(request?.body)).length;
+    expect(bytes).toBeLessThanOrEqual(60 * 1024);
+    // ...and it still sent what did fit, rather than giving up on the batch.
+    expect((request?.body as { events: unknown[] }).events.length).toBeGreaterThan(0);
+    expect(queue.size()).toBe(20);
   });
 });

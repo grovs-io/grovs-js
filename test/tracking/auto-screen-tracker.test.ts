@@ -369,3 +369,126 @@ describe('ScreenAliases', () => {
     });
   });
 });
+
+describe('re-enabling after another library patched over us', () => {
+  // The same reset the main suite uses: these tests read the URL back as the
+  // screen name, so a title or a patch left by an earlier test would decide it.
+  beforeEach(() => {
+    history.pushState = originalPushState;
+    history.replaceState = originalReplaceState;
+    history.replaceState({}, '', '/');
+    document.title = '';
+  });
+
+  afterEach(() => {
+    history.pushState = originalPushState;
+    history.replaceState = originalReplaceState;
+  });
+
+  // stop() cannot restore the originals once someone else's wrapper closed
+  // over ours, so the patch stays installed and inert. start() then took the
+  // "already installed" path and returned without re-attaching the listeners
+  // it had removed: pushState kept tracking, Back and Forward did not.
+  it('restores popstate tracking on re-enable', async () => {
+    const { tracker, onScreen } = make();
+    tracker.start();
+
+    // Another library patches after us and does not mark its wrapper.
+    const ours = history.pushState;
+    history.pushState = function patchedByGA(...args: Parameters<History['pushState']>) {
+      return (ours as History['pushState']).apply(history, args);
+    } as History['pushState'];
+
+    tracker.stop();
+    tracker.start();
+    onScreen.mockClear();
+
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    await settle();
+
+    expect(onScreen).toHaveBeenCalled();
+    tracker.stop();
+  });
+
+  // A reconfigure retires one tracker and starts another. When the patch
+  // cannot be uninstalled, the replacement used to see the marker, refuse to
+  // install, and report to nobody — SPA tracking dead for the page's life.
+  it('lets a replacement adopt a patch the retired tracker could not remove', async () => {
+    const first = make();
+    first.tracker.start();
+
+    // Another library wraps replaceState after us, so stop() must leave ours in.
+    const ours = history.replaceState;
+    history.replaceState = function wrapped(...args: Parameters<History['replaceState']>) {
+      return (ours as History['replaceState']).apply(history, args);
+    } as History['replaceState'];
+
+    first.tracker.stop();
+
+    const second = make();
+    second.tracker.start();
+    first.onScreen.mockClear();
+    second.onScreen.mockClear();
+
+    history.pushState({}, '', '/adopted');
+    await settle();
+
+    expect(second.onScreen).toHaveBeenCalledWith('/adopted');
+    expect(first.onScreen).not.toHaveBeenCalled();
+    second.tracker.stop();
+  });
+
+  // Two live clients on one page stays unsupported (docs/CONTEXT.md).
+  it('does not let a second live tracker take the patch over', async () => {
+    const first = make();
+    first.tracker.start();
+
+    const second = make();
+    second.tracker.start();
+    first.onScreen.mockClear();
+    second.onScreen.mockClear();
+
+    history.pushState({}, '', '/shared');
+    await settle();
+
+    expect(first.onScreen).toHaveBeenCalledWith('/shared');
+    expect(second.onScreen).not.toHaveBeenCalled();
+    first.tracker.stop();
+    second.tracker.stop();
+  });
+
+  // Restarting the same tracker over a patch it could not uninstall: stop()
+  // released ownership, so the patch called nobody until start() takes it back.
+  it('reclaims ownership when restarted over its own retained patch', async () => {
+    const { tracker, onScreen } = make();
+    tracker.start();
+
+    const ours = history.pushState;
+    history.pushState = function wrapped(...args: Parameters<History['pushState']>) {
+      return (ours as History['pushState']).apply(history, args);
+    } as History['pushState'];
+
+    tracker.stop();
+    tracker.start();
+    onScreen.mockClear();
+
+    history.pushState({}, '', '/after-restart');
+    await settle();
+
+    expect(onScreen).toHaveBeenCalledWith('/after-restart');
+    tracker.stop();
+  });
+
+  it('does not attach a second pair of listeners on re-entry', async () => {
+    const { tracker, onScreen } = make();
+    tracker.start();
+    tracker.start();
+    onScreen.mockClear();
+
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    await settle();
+
+    expect(onScreen).toHaveBeenCalledTimes(1);
+    tracker.stop();
+  });
+});

@@ -15,7 +15,12 @@ import { PaymentEventsHandler, type CustomPurchase } from '../events/payment-eve
 import { LifecycleTracker } from '../tracking/lifecycle';
 import { AutoScreenTracker, type ScreenNameProvider } from '../tracking/auto-screen-tracker';
 import { ScreenAliases } from '../tracking/screen-aliases';
-import { SessionManager, SESSION_ACTIVITY_KEY, SESSION_ID_KEY } from './session';
+import {
+  SessionManager,
+  hasActiveSession,
+  SESSION_ACTIVITY_KEY,
+  SESSION_ID_KEY,
+} from './session';
 import { SystemClock, type Clock } from './clock';
 import {
   getFingerprint,
@@ -55,6 +60,13 @@ const BULK_KEYS = [
  * could read it. The queue is merged separately, which keeps both sides.
  */
 const SWITCH_KEYS = BULK_KEYS.filter((key) => key !== QUEUE_STORAGE_KEY);
+
+/** The same, minus the session: used when the durable store already holds a
+ *  live one. A session is a person, not a tab (spec A6), so this tab's
+ *  memory-only session must not be written over a sibling's active one. */
+const SWITCH_KEYS_KEEPING_SESSION = SWITCH_KEYS.filter(
+  (key) => key !== SESSION_ID_KEY && key !== SESSION_ACTIVITY_KEY,
+);
 
 /**
  * The store used while consent is pending, shared across clients.
@@ -104,6 +116,9 @@ export class GrovsClient {
   private readonly autoStartEvents: boolean;
   private payments: PaymentEventsHandler | null = null;
   private pipelineStarted = false;
+  /** An initialization that started but never finished — see setEnabled. */
+  private initStarted = false;
+  private initComplete = false;
   private configureGeneration = 0;
   private disposed = false;
   private readonly storageInjected: boolean;
@@ -132,6 +147,11 @@ export class GrovsClient {
   private identityDirty = false;
   /** Same catch-up for screen aliases set before authentication (spec B8). */
   private aliasesDirty = false;
+  /** The tail of the identity-update chain — see pushIdentity. */
+  private identityPush: Promise<void> = Promise.resolve();
+  /** Bumped by every setter. An acknowledgement clears the dirty flag only
+   *  when it carries the newest one — see sendIdentity. */
+  private identityRevision = 0;
 
   constructor(config: GrovsConfig, deps: ClientDeps = {}) {
     this.config = resolveConfig(config);
@@ -170,6 +190,19 @@ export class GrovsClient {
       this.context,
       deps.transport ?? new FetchTransport(),
       () => getPageIdentifier(),
+      // Bound to the lifecycle as it was when the request left. reset() moves
+      // the generation without withdrawing consent in the default
+      // configuration, and its retries were still sending the visitor id it
+      // had just cleared. The attempt in flight cannot be recalled; the
+      // retries behind it can.
+      () => {
+        const generation = this.configureGeneration;
+        return () =>
+          generation !== this.configureGeneration ||
+          !this.consentGranted ||
+          !this.enabled ||
+          this.disposed;
+      },
     );
     this.deeplinks = new DeeplinkResolver(this.storage, () => getWindow()?.location.href ?? null);
 
@@ -186,6 +219,7 @@ export class GrovsClient {
       currentPath: () => this.sessionPath,
       isEnabled: () => this.enabled,
       isActive: () => this.isActive(),
+      canTransmit: () => this.canTransmit(),
     });
     this.custom = new CustomEventsHandler({
       events: this.events,
@@ -198,6 +232,9 @@ export class GrovsClient {
       clock: this.clock,
       onEngagement: (seconds) => this.events.log('time_spent', seconds),
       onExit: () => this.events.flushOnExit(),
+      onForeground: () => {
+        this.session.currentSessionId();
+      },
       onHide: () => {
         // Persist before flushing (spec A4): on mobile Safari a hidden tab is
         // often killed with no pagehide, so the debounced queue must reach
@@ -238,7 +275,23 @@ export class GrovsClient {
     // One switch repoints the queue, session, deeplink resolver and counters
     // together. Migrating each holder separately is how the session and the
     // captured path previously got stranded on the memory store forever.
-    this.storage.switchTo(resolveBulkStorage(this.logger), SWITCH_KEYS);
+    const durable = resolveBulkStorage(this.logger);
+    const sibling = hasActiveSession(durable, this.clock.now());
+    const pendingSession = sibling ? this.session.currentSessionId() : null;
+
+    this.storage.switchTo(durable, sibling ? SWITCH_KEYS_KEEPING_SESSION : SWITCH_KEYS);
+
+    // Joining the session already in progress, so the events tracked before
+    // consent belong to it rather than to the memory-only one they were
+    // stamped with — otherwise this visit is reported as two.
+    if (pendingSession !== null) {
+      const adopted = this.session.currentSessionId();
+      if (adopted !== pendingSession) {
+        this.queue.transform((event) =>
+          event.sessionId === pendingSession ? { ...event, sessionId: adopted } : event,
+        );
+      }
+    }
     // Merge before persisting. The queue was built over empty memory, so its
     // in-memory array knows nothing about events a previous visit left in
     // localStorage — and an unconditional write would erase them.
@@ -282,7 +335,12 @@ export class GrovsClient {
     pendingConsentStore = null;
     this.context.reset();
     this.custom.resetDedup();
+    // Or the next tracked event leaves under the previous configure()'s
+    // permission, after the reset that was supposed to stop it.
+    this.events.resetDelivery();
     this.pipelineStarted = false;
+    this.initStarted = false;
+    this.initComplete = false;
     this.identityDirty = false;
     // aliasesDirty deliberately survives: the alias map is integrator
     // configuration, not user data — reset() does not clear this.aliases
@@ -297,8 +355,12 @@ export class GrovsClient {
     if (!this.consentGranted) {
       // Consent revoked means back to memory-only. Leaving the durable store
       // attached would keep persisting after the user withdrew the permission
-      // that allowed it — the specific guarantee consent mode sells.
-      this.storage.switchTo(new MemoryStorage(), []);
+      // that allowed it — the specific guarantee consent mode sells. A fresh
+      // *shared* store: empty, so nothing survives the reset, but still the
+      // one a replacement client picks up, or events tracked between this
+      // reset and the next configure() are stranded on a store nobody reads.
+      pendingConsentStore = new MemoryStorage();
+      this.storage.switchTo(pendingConsentStore, []);
       this.identityStore = null;
     }
 
@@ -313,6 +375,11 @@ export class GrovsClient {
     // `disposed` covers the facade case: Grovs.configure() builds a *new*
     // client, so the old one's counter never moves — only its shutdown does.
     const superseded = (): boolean => generation !== this.configureGeneration || this.disposed;
+
+    // Captured before the consent gate. The store is memory until consent
+    // lands, so nothing reaches the device — but a router that cleans the
+    // query string while the banner is up takes the campaign with it.
+    this.sessionPath = this.deeplinks.capture();
 
     if (!this.consentGranted) {
       this.logger.info(
@@ -336,7 +403,8 @@ export class GrovsClient {
       return false;
     }
 
-    this.sessionPath = this.deeplinks.capture();
+    this.initStarted = true;
+    this.initComplete = false;
 
     if (superseded()) return false;
 
@@ -348,6 +416,9 @@ export class GrovsClient {
     if (superseded()) return false;
 
     if (!response.ok) {
+      // Nothing was started that a later enable would need to finish, and a
+      // re-run would report the same failure a second time.
+      this.initStarted = false;
       this.reportAuthFailure(response.status, response.body);
       return false;
     }
@@ -422,6 +493,7 @@ export class GrovsClient {
     // ships it that way.
     if (this.autoStartEvents) void this.displayAutomaticMessages();
 
+    this.initComplete = true;
     return true;
   }
 
@@ -602,10 +674,22 @@ export class GrovsClient {
       // patch on a client that has been told to stop.
       this.configureGeneration += 1;
       this.shutdown();
-    } else if (this.context.authenticated) {
-      this.lifecycle.start();
-      if (this.config.autoTrackScreenViews) this.screens.start();
-      this.events.resume();
+    } else {
+      if (this.context.authenticated) {
+        this.lifecycle.start();
+        if (this.config.autoTrackScreenViews) this.screens.start();
+        this.events.resume();
+        // Only configure() consumed this before, and the facade's configure()
+        // builds a *new* client — so an identifier set while stopped sat in
+        // the context until the next page load read the server value over it.
+        if (this.identityDirty) void this.pushIdentity();
+      }
+
+      // Finish an initialization disabling interrupted, rather than resuming
+      // half of one: authenticated with pathResolved never set is a client
+      // whose timers tick and whose flushes send nothing. Emitting the launch
+      // events twice is covered by the pipelineStarted guard.
+      if (this.initStarted && !this.initComplete) void this.configure();
     }
 
     this.logger.info(`SDK ${enabled ? 'enabled' : 'disabled'}.`);
@@ -646,6 +730,22 @@ export class GrovsClient {
   }
 
   /**
+   * Moves on every configure(), reset() and setEnabled(false).
+   *
+   * Callers that await a response capture it first and compare after: `usable`
+   * alone goes true again when the SDK re-authenticates, which is exactly the
+   * case where the response belongs to the previous visitor.
+   */
+  get lifecycleGeneration(): number {
+    return this.configureGeneration;
+  }
+
+  /** Whether anything at all may leave the device right now. */
+  private canTransmit(): boolean {
+    return this.consentGranted && this.context.authenticated;
+  }
+
+  /**
    * Reports a call made before the SDK was usable, once per method.
    *
    * During server rendering every public method lands here, and a page that
@@ -662,18 +762,57 @@ export class GrovsClient {
   }
 
   private markIdentityChanged(): void {
-    if (!this.enabled) return;
-    if (!this.context.authenticated) {
-      this.identityDirty = true;
-      return;
-    }
+    // Set on every setter and cleared only by an acknowledgement, so the flag
+    // records the integrator's intent rather than being inferred from the
+    // context later — setUserIdentifier(null) is an instruction to clear, and
+    // reading the context back cannot tell that from "nothing pending".
+    this.identityDirty = true;
+    this.identityRevision += 1;
+    if (!this.enabled || !this.context.authenticated) return;
     void this.pushIdentity();
   }
 
-  private async pushIdentity(): Promise<void> {
+  /** Serialized: two setters racing let the older response land last, leaving
+   *  the backend holding the value the integrator had already replaced. */
+  private pushIdentity(): Promise<void> {
+    const generation = this.configureGeneration;
+    const revision = this.identityRevision;
+    // The catch keeps the chain usable: a transport that rejects rather than
+    // resolving would otherwise leave every later update chained onto a
+    // rejected promise, silently sending nothing.
+    this.identityPush = this.identityPush.then(() =>
+      this.sendIdentity(generation, revision).catch(() => {
+        this.logger.reportError(
+          GrovsError.networkRequestFailed,
+          'Could not update the user identifier or attributes.',
+        );
+      }),
+    );
+    return this.identityPush;
+  }
+
+  private async sendIdentity(generation: number, revision: number): Promise<void> {
+    // Checked here and not only when the send was scheduled: a queued update
+    // runs after whatever happened while it waited, and it reads the context
+    // as it is now. A reset in between must not be followed by a request
+    // carrying the values set after it.
+    if (generation !== this.configureGeneration || !this.canTransmit()) return;
+
     const response = await this.api.setUserAttributes();
+
+    // And again after the await. This response describes the values as they
+    // were when it left; a reset or a disable since means the context holds
+    // something else, and clearing the flag on it would drop that instead.
+    if (generation !== this.configureGeneration) return;
+
+    // Cleared only here, and only by an acknowledgement that covers the newest
+    // setter: two changes inside one request's flight would otherwise let the
+    // first one's success clear the flag for the second, which is then
+    // forgotten if it fails. Every other path — skipped, superseded, refused —
+    // leaves the change owed, which is what configure() and setEnabled(true)
+    // pick up.
     if (response.ok) {
-      this.identityDirty = false;
+      if (revision === this.identityRevision) this.identityDirty = false;
       return;
     }
     this.logger.reportError(
@@ -692,6 +831,10 @@ export class GrovsClient {
       : await this.api.payloadForDevice(details);
 
     if (!response.ok) {
+      // As with authenticate: a superseded attempt's failure is not the active
+      // configuration's, and reporting it sends the integrator chasing a
+      // config that no longer exists.
+      if (superseded()) return false;
       this.logger.reportError(
         GrovsError.networkRequestFailed,
         'Could not fetch the deep link payload.',
@@ -743,7 +886,14 @@ export class GrovsClient {
 
   private reportAuthFailure(status: number, body: unknown): void {
     const rawError = (body as Record<string, unknown> | null)?.['error'];
-    const serverMessage = typeof rawError === 'string' ? rawError : `HTTP ${status}`;
+    // A 2xx only reaches here when the transport could not read the body, and
+    // "HTTP 200" sends the integrator looking at a server that answered fine.
+    const serverMessage =
+      typeof rawError === 'string'
+        ? rawError
+        : status >= 200 && status < 300
+          ? `The server answered ${status} with a body the SDK could not read.`
+          : `HTTP ${status}`;
 
     if (status === 422) {
       // Spec B9. WebConfigurationLinkedDomain has no normalization, so the

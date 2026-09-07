@@ -3,6 +3,7 @@ import { GrovsClient, __resetPendingConsentStore } from '../../src/core/client';
 import { MessagesService } from '../../src/messages/messages';
 import { PersistedQueue } from '../../src/storage/persisted-queue';
 import { FakeTransport } from '../helpers/fake-transport';
+import type { TransportRequest, TransportResponse } from '../../src/net/transport';
 import { FakeStorage } from '../helpers/fake-storage';
 import { FakeClock } from '../helpers/fake-clock';
 
@@ -752,6 +753,502 @@ describe('message iframe hardening', () => {
     expect(frame?.getAttribute('sandbox')).toContain('allow-scripts');
     expect(frame?.getAttribute('sandbox')).not.toContain('allow-same-origin');
     expect(frame?.getAttribute('src')).toBe('about:blank');
+    client.shutdown();
+  });
+});
+
+/** Lets a test act at the exact moment a given request is issued. */
+class HookedTransport extends FakeTransport {
+  onRequest: ((request: TransportRequest) => void) | null = null;
+
+  override send(request: TransportRequest): Promise<TransportResponse> {
+    this.onRequest?.(request);
+    return super.send(request);
+  }
+}
+
+describe('withdrawing consent stops delivery, not just storage', () => {
+  beforeEach(clearBrowserStorage);
+
+  // reset() clears the queue, the identity and the durable store, and returns
+  // the client to its pre-consent state — but the events handler kept the
+  // permission to send it was granted by the configure() before the reset, so
+  // the next tracked event went out anyway.
+  it('sends nothing tracked after reset revokes consent', async () => {
+    const transport = new FakeTransport();
+    transport.enqueue(AUTH_OK);
+    const client = new GrovsClient(
+      { apiKey: 'k', requireConsent: true },
+      { transport, storage: new FakeStorage(), autoStartEvents: false },
+    );
+    await client.grantConsent();
+    client.reset();
+    transport.requests.length = 0;
+
+    client.track('after-reset');
+    await client.flush();
+
+    expect(transport.requestsTo('/events/batch')).toHaveLength(0);
+    client.shutdown();
+  });
+
+  it('delivers again once consent is granted a second time', async () => {
+    const transport = new FakeTransport();
+    transport.enqueue(AUTH_OK).enqueue(AUTH_OK);
+    const client = new GrovsClient(
+      { apiKey: 'k', requireConsent: true },
+      { transport, storage: new FakeStorage(), autoStartEvents: false },
+    );
+    await client.grantConsent();
+    client.reset();
+
+    client.track('after-reset');
+    await client.grantConsent();
+    await client.flush();
+
+    const sent = transport
+      .requestsTo('/events/batch')
+      .flatMap((r) => (r.body as { events: Record<string, unknown>[] }).events);
+    expect(sent.map((e) => e['event_name'])).toContain('after-reset');
+    client.shutdown();
+  });
+});
+
+describe('an initialization interrupted by disabling', () => {
+  beforeEach(clearBrowserStorage);
+
+  // Disabling invalidates whatever configure() has in flight. Interrupted
+  // after authentication but before the payload lookup, the client reported
+  // itself authenticated while the handler's pathResolved stayed false for
+  // ever: re-enabling restarted the timers and every flush sent nothing.
+  it('finishes on re-enable rather than resuming half of one', async () => {
+    const transport = new HookedTransport();
+    transport.enqueue(AUTH_OK);
+    const client = new GrovsClient(
+      { apiKey: 'k' },
+      { transport, storage: new FakeStorage(), autoStartEvents: false },
+    );
+
+    transport.onRequest = (request) => {
+      if (request.url.includes('/data_for_device')) {
+        transport.onRequest = null;
+        client.setEnabled(false);
+      }
+    };
+
+    await client.configure();
+    expect(client.isAuthenticated()).toBe(true);
+
+    client.setEnabled(true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    client.track('after-enable');
+    await client.flush();
+
+    const sent = transport
+      .requestsTo('/events/batch')
+      .flatMap((r) => (r.body as { events: Record<string, unknown>[] }).events);
+    expect(sent.map((e) => e['event_name'])).toContain('after-enable');
+    client.shutdown();
+  });
+
+  it('does not authenticate on enable when configure() was never called', async () => {
+    const transport = new FakeTransport();
+    const client = new GrovsClient(
+      { apiKey: 'k' },
+      { transport, storage: new FakeStorage(), autoStartEvents: false },
+    );
+
+    client.setEnabled(false);
+    client.setEnabled(true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(transport.requests).toHaveLength(0);
+  });
+});
+
+describe('consent mode keeps the campaign and the events across a reconfigure', () => {
+  beforeEach(() => {
+    clearBrowserStorage();
+    __resetPendingConsentStore();
+    history.replaceState({}, '', '/');
+  });
+
+  // The path used to be captured only once consent landed. A router that
+  // cleans the query string while the banner is up took the campaign with it,
+  // and the visit fell back to fingerprint matching.
+  it('captures the campaign before consent, not after', async () => {
+    history.replaceState({}, '', '/?Grovs=campaign-c');
+    const transport = new FakeTransport();
+    const client = new GrovsClient(
+      { apiKey: 'k', requireConsent: true },
+      { transport, autoStartEvents: false },
+    );
+    await client.configure();
+
+    // The host router cleans up before the visitor answers the banner.
+    history.replaceState({}, '', '/');
+    transport.enqueue(AUTH_OK);
+    await client.grantConsent();
+
+    const call = transport.requestsTo('/data_for_device_and_path')[0];
+    expect((call?.body as Record<string, unknown>)['path']).toBe('campaign-c');
+    client.shutdown();
+  });
+
+  // The back-fill boundary must be the visit, not the handler: the shared
+  // pending store exists so a second configure() before consent keeps what the
+  // first client tracked, and those events are still this visit's.
+  it('back-fills the campaign onto events the replaced client tracked', async () => {
+    history.replaceState({}, '', '/?Grovs=campaign-b');
+    const transport = new FakeTransport();
+
+    const first = new GrovsClient(
+      { apiKey: 'k', requireConsent: true },
+      { transport, autoStartEvents: false },
+    );
+    await first.configure();
+    // The router cleans the URL, and a second configure() replaces the client,
+    // both before the visitor answers the banner.
+    history.replaceState({}, '', '/');
+    first.track('before-consent');
+    first.dispose();
+
+    transport.enqueue(AUTH_OK);
+    const second = new GrovsClient(
+      { apiKey: 'k', requireConsent: true },
+      { transport, autoStartEvents: false },
+    );
+    await second.grantConsent();
+    await second.flush();
+
+    const sent = transport
+      .requestsTo('/events/batch')
+      .flatMap((r) => (r.body as { events: Record<string, unknown>[] }).events);
+    const event = sent.find((e) => e['event_name'] === 'before-consent');
+    expect(event?.['path']).toBe('campaign-b');
+    second.shutdown();
+  });
+
+  // reset() in consent mode swapped in a private store, so anything tracked
+  // before the next configure() was stranded on an object nobody else reads.
+  it('keeps events tracked between reset and the next configure', async () => {
+    const transport = new FakeTransport();
+    transport.enqueue(AUTH_OK);
+    const client = new GrovsClient(
+      { apiKey: 'k', requireConsent: true },
+      { transport, autoStartEvents: false },
+    );
+    await client.grantConsent();
+    client.reset();
+    client.track('after-reset');
+    client.dispose();
+
+    transport.enqueue(AUTH_OK);
+    const next = new GrovsClient(
+      { apiKey: 'k', requireConsent: true },
+      { transport, autoStartEvents: false },
+    );
+    await next.grantConsent();
+    await next.flush();
+
+    const sent = transport
+      .requestsTo('/events/batch')
+      .flatMap((r) => (r.body as { events: Record<string, unknown>[] }).events);
+    expect(sent.map((e) => e['event_name'])).toContain('after-reset');
+    next.shutdown();
+  });
+});
+
+describe('identity changes made while the SDK is stopped', () => {
+  beforeEach(clearBrowserStorage);
+
+  // markIdentityChanged() returned early when disabled, so the flag was never
+  // set and the next configure() read the server value back over it.
+  it('are pushed by the next configure instead of being overwritten', async () => {
+    const transport = new FakeTransport();
+    transport.enqueue(AUTH_OK);
+    const client = new GrovsClient(
+      { apiKey: 'k' },
+      { transport, storage: new FakeStorage(), autoStartEvents: false },
+    );
+
+    client.setEnabled(false);
+    client.setUserIdentifier('user-7');
+    client.setEnabled(true);
+    await client.configure();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(client.userIdentifier).toBe('user-7');
+    expect(transport.requestsTo('/visitor_attributes')).toHaveLength(1);
+    client.shutdown();
+  });
+});
+
+describe('a queued identity update is not a licence to send later', () => {
+  beforeEach(() => {
+    clearBrowserStorage();
+    __resetPendingConsentStore();
+  });
+
+  // Serializing the pushes moved the send away from the call that scheduled
+  // it. The permission has to be re-checked where the request actually goes
+  // out, or a task queued before reset() carries values set after it.
+  it('drops a push queued before a reset revoked consent', async () => {
+    const transport = new FakeTransport();
+    transport.enqueue(AUTH_OK);
+    const client = new GrovsClient(
+      { apiKey: 'k', requireConsent: true },
+      { transport, autoStartEvents: false },
+    );
+    await client.grantConsent();
+
+    client.setUserIdentifier('user-a');
+    client.reset();
+    client.setUserAttributes({ plan: 'pro' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(transport.requestsTo('/visitor_attributes')).toHaveLength(0);
+    client.shutdown();
+  });
+
+  // A transport that rejects rather than resolving used to leave every later
+  // update chained onto a rejected promise.
+  it('keeps the chain usable after a rejected send', async () => {
+    const transport = new FakeTransport();
+    transport.enqueue(AUTH_OK);
+    const client = new GrovsClient(
+      { apiKey: 'k' },
+      { transport, storage: new FakeStorage(), autoStartEvents: false },
+    );
+    await client.configure();
+
+    const send = vi
+      .spyOn(transport, 'send')
+      .mockRejectedValueOnce(new Error('transport exploded'));
+    client.setUserIdentifier('user-a');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    send.mockRestore();
+
+    client.setUserAttributes({ plan: 'pro' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(transport.requestsTo('/visitor_attributes')).toHaveLength(1);
+    client.shutdown();
+  });
+});
+
+describe('the session is a person, not a tab, across consent', () => {
+  beforeEach(() => {
+    clearBrowserStorage();
+    __resetPendingConsentStore();
+  });
+
+  // Granting consent copied this tab's memory-only session over the durable
+  // one, changing the session id under a sibling tab that was active a second
+  // ago and reporting one visit as two.
+  it('joins a sibling tab\'s live session instead of replacing it', async () => {
+    // Durable storage, because that is what consent migrates onto.
+    localStorage.setItem('grovs_session_id', 'sibling-session');
+    localStorage.setItem('grovs_session_activity', String(Date.now() - 1000));
+
+    const transport = new FakeTransport();
+    transport.enqueue(AUTH_OK);
+    const client = new GrovsClient(
+      { apiKey: 'k', requireConsent: true },
+      { transport, autoStartEvents: false },
+    );
+    await client.configure();
+    client.track('before-consent');
+    await client.grantConsent();
+    await client.flush();
+
+    expect(localStorage.getItem('grovs_session_id')).toBe('sibling-session');
+    const sent = transport
+      .requestsTo('/events/batch')
+      .flatMap((r) => (r.body as { events: Record<string, unknown>[] }).events);
+    const event = sent.find((e) => e['event_name'] === 'before-consent');
+    expect(event?.['session_id']).toBe('sibling-session');
+    client.shutdown();
+  });
+});
+
+describe('an undelivered identity update stays owed', () => {
+  beforeEach(clearBrowserStorage);
+
+  // The generation guard skipped the send without marking the change dirty,
+  // so the value lived only in memory and the next configure() read the server
+  // value back over it.
+  it('is pushed by the next configure when a disable skipped it', async () => {
+    const transport = new FakeTransport();
+    transport.enqueue(AUTH_OK).enqueue(AUTH_OK);
+    const client = new GrovsClient(
+      { apiKey: 'k' },
+      { transport, storage: new FakeStorage(), autoStartEvents: false },
+    );
+    await client.configure();
+
+    client.setUserIdentifier('user-a');
+    client.setEnabled(false);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    client.setEnabled(true);
+    await client.configure();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(client.userIdentifier).toBe('user-a');
+    client.shutdown();
+  });
+});
+
+describe('retries stop when the client that made them is gone', () => {
+  beforeEach(clearBrowserStorage);
+
+  // reset() moves the lifecycle without withdrawing consent in the default
+  // configuration, so the retry guard stayed satisfied and the two attempts
+  // behind the first went on sending the visitor id it had just cleared.
+  it('abandons a retry begun before a reset', async () => {
+    const transport = new FakeTransport();
+    transport.enqueue(AUTH_OK);
+    const client = new GrovsClient(
+      { apiKey: 'k' },
+      { transport, storage: new FakeStorage(), autoStartEvents: false },
+    );
+    await client.configure();
+
+    const request = transport.requestsTo('/authenticate')[0];
+    expect(request?.abandon?.()).toBe(false);
+
+    client.reset();
+
+    expect(request?.abandon?.()).toBe(true);
+  });
+});
+
+describe('an identity change made while stopped is delivered on re-enable', () => {
+  beforeEach(clearBrowserStorage);
+
+  async function authed(transport: FakeTransport): Promise<GrovsClient> {
+    transport.enqueue(AUTH_OK);
+    const client = new GrovsClient(
+      { apiKey: 'k' },
+      { transport, storage: new FakeStorage(), autoStartEvents: false },
+    );
+    await client.configure();
+    return client;
+  }
+
+  const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+  // Only configure() consumed the flag, and the facade's configure() builds a
+  // new client whose flag is clean — so no integrator using the facade ever
+  // reached the path the earlier tests exercised.
+  it('pushes without waiting for another configure()', async () => {
+    const transport = new FakeTransport();
+    const client = await authed(transport);
+
+    client.setEnabled(false);
+    client.setUserIdentifier('user-a');
+    client.setEnabled(true);
+    await tick();
+
+    expect(transport.requestsTo('/visitor_attributes')).toHaveLength(1);
+    client.shutdown();
+  });
+
+  // setUserIdentifier(null) is an instruction to clear. Inferring "pending"
+  // from the context could not tell that from having nothing to send.
+  it('keeps an explicit clear pending', async () => {
+    const transport = new FakeTransport();
+    const client = await authed(transport);
+
+    client.setEnabled(false);
+    client.setUserIdentifier(null);
+    client.setEnabled(true);
+    await tick();
+
+    expect(transport.requestsTo('/visitor_attributes')).toHaveLength(1);
+    client.shutdown();
+  });
+
+  // Two setters inside one request's flight: A's success used to clear the
+  // flag for B, which was then forgotten when B failed and the next configure
+  // read A's value back from the server.
+  it('is not cleared by an acknowledgement for an older change', async () => {
+    const transport = new FakeTransport();
+    const client = await authed(transport);
+
+    transport.enqueue({ ok: true, status: 200, body: {} }).enqueueStatus(500);
+    client.setUserIdentifier('user-a');
+    client.setUserIdentifier('user-b');
+    await tick();
+    expect(transport.requestsTo('/visitor_attributes')).toHaveLength(2);
+
+    transport.enqueue(AUTH_OK);
+    await client.configure();
+    await tick();
+
+    expect(transport.requestsTo('/visitor_attributes')).toHaveLength(3);
+    expect(client.userIdentifier).toBe('user-b');
+    client.shutdown();
+  });
+
+  // configure() documents a failed sync as retried by the next configure();
+  // that was only true for the not-yet-authenticated path.
+  it('stays pending when an authenticated push is refused', async () => {
+    const transport = new FakeTransport();
+    const client = await authed(transport);
+
+    transport.enqueueStatus(500);
+    client.setUserIdentifier('user-a');
+    await tick();
+    expect(transport.requestsTo('/visitor_attributes')).toHaveLength(1);
+
+    transport.enqueue(AUTH_OK);
+    await client.configure();
+    await tick();
+
+    expect(transport.requestsTo('/visitor_attributes')).toHaveLength(2);
+    client.shutdown();
+  });
+});
+
+describe('a response belongs to the identity that asked for it', () => {
+  beforeEach(clearBrowserStorage);
+
+  // usable goes true again when the SDK re-authenticates, which is exactly the
+  // case where the response in flight belongs to the previous visitor.
+  it('drops messages fetched for a visitor the reset replaced', async () => {
+    const transport = new FakeTransport();
+    transport.enqueue(AUTH_OK);
+    const client = new GrovsClient(
+      { apiKey: 'k' },
+      { transport, storage: new FakeStorage(), autoStartEvents: false },
+    );
+    await client.configure();
+
+    const messages = new MessagesService(client);
+    let release = (): void => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const send = vi.spyOn(transport, 'send').mockImplementationOnce(async () => {
+      await held;
+      return {
+        ok: true,
+        status: 200,
+        body: { notifications: [{ id: 1, title: 'A', subtitle: 'B', read: false, access_url: 'u' }] },
+      };
+    });
+
+    const pending = messages.fetchMessages(1);
+    client.reset();
+    send.mockRestore();
+    transport.enqueue(AUTH_OK);
+    await client.configure();
+    release();
+
+    await expect(pending).resolves.toBeNull();
     client.shutdown();
   });
 });

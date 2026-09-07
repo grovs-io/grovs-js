@@ -1,8 +1,10 @@
 import { beforeEach } from 'vitest';
 import { __resetScreenDedup } from '../src/events/custom-events-handler';
+import { __resetPatchOwner } from '../src/tracking/auto-screen-tracker';
 
-// Module-level, so it would otherwise leak between tests.
+// Module-level, so they would otherwise leak between tests.
 beforeEach(__resetScreenDedup);
+beforeEach(__resetPatchOwner);
 
 /**
  * jsdom implements no canvas backend, so HTMLCanvasElement.getContext throws

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { MessagesService } from '../../src/messages/messages';
+import { MessagesService, type GrovsMessage } from '../../src/messages/messages';
 import { MessagesUI } from '../../src/messages/messages-ui';
 import type { MessagesTheme } from '../../src/messages/messages-theme';
 import { GrovsClient } from '../../src/core/client';
@@ -549,5 +549,170 @@ describe('MessagesUI', () => {
       expect(transport.requestsTo('/mark_notification_as_read')).toHaveLength(1),
     );
     expect(transport.last?.body).toEqual({ id: 42 });
+  });
+});
+
+/** Drives the list with scripted pages, including one that can be held open. */
+class StubMessagesService {
+  readonly calls: number[] = [];
+  readonly pages = new Map<number, GrovsMessage[]>();
+  unread: number | null = null;
+  private hold: Promise<void> | null = null;
+  private open: (() => void) | null = null;
+
+  blockNext(): void {
+    this.hold = new Promise<void>((resolve) => {
+      this.open = resolve;
+    });
+  }
+
+  releaseHeld(): void {
+    this.open?.();
+    this.open = null;
+    this.hold = null;
+  }
+
+  /** null is a failed request, as MessagesService.fetchMessages returns it. */
+  failPages = new Set<number>();
+
+  async fetchMessages(page: number): Promise<GrovsMessage[] | null> {
+    this.calls.push(page);
+    // Captured at call time, as a real request is: a held page keeps the
+    // answer it was going to give, not the one scripted while it waited.
+    const response = this.failPages.has(page) ? null : (this.pages.get(page) ?? []);
+    const held = this.hold;
+    this.hold = null;
+    if (held) await held;
+    return response;
+  }
+
+  async getMessages(page: number): Promise<GrovsMessage[]> {
+    return (await this.fetchMessages(page)) ?? [];
+  }
+
+  async fetchUnreadCount(): Promise<number | null> {
+    return this.unread;
+  }
+
+  async markMessageAsRead(): Promise<boolean> {
+    return true;
+  }
+
+  async messagesForAutomaticDisplay(): Promise<GrovsMessage[]> {
+    return [];
+  }
+}
+
+describe('MessagesUI pagination', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  function message(id: number, read = false): GrovsMessage {
+    return { id, title: `M${id}`, subtitle: 's', read, access_url: 'u' };
+  }
+
+  function uiOver(service: StubMessagesService): MessagesUI {
+    return new MessagesUI(document, service as unknown as MessagesService, new Logger());
+  }
+
+  function list(): HTMLElement {
+    const element = document
+      .getElementById('Grovs-modal')
+      ?.shadowRoot?.querySelector('.grovs-item-list');
+    if (!element) throw new Error('list not mounted');
+    return element as HTMLElement;
+  }
+
+  function badgeCount(): string | null {
+    return (
+      document.getElementById('Grovs-modal')?.shadowRoot?.querySelector('.grovs-badge')
+        ?.textContent ?? null
+    );
+  }
+
+  /** jsdom has no layout, so the scroll-driven fetch needs its metrics stubbed. */
+  function scrollToBottom(element: HTMLElement): void {
+    Object.defineProperty(element, 'clientHeight', { value: 100, configurable: true });
+    Object.defineProperty(element, 'scrollHeight', { value: 400, configurable: true });
+    Object.defineProperty(element, 'scrollTop', { value: 300, configurable: true });
+    element.dispatchEvent(new Event('scroll'));
+  }
+
+  const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+  // The server total covers pages that were never loaded, so tallying rows on
+  // top of it takes the badge past the real figure: 16 unread became 17 after
+  // loading the last unread message.
+  it('does not add to the badge once the server total has landed', async () => {
+    const service = new StubMessagesService();
+    service.pages.set(1, [message(1)]);
+    service.pages.set(2, [message(2)]);
+    service.unread = 16;
+
+    const ui = uiOver(service);
+    await ui.showMessagesList();
+    expect(badgeCount()).toBe('16');
+
+    scrollToBottom(list());
+    await settle();
+
+    expect(service.calls).toContain(2);
+    expect(badgeCount()).toBe('16');
+    ui.close();
+  });
+
+  // "No messages yet" is a statement about the account. A failed request is a
+  // statement about the network, and the two must not render the same.
+  it('says a failed first page failed, and stays open to a retry', async () => {
+    const service = new StubMessagesService();
+    service.failPages.add(1);
+
+    const ui = uiOver(service);
+    await ui.showMessagesList();
+
+    expect(list().textContent).toContain('could not be loaded');
+    expect(list().textContent).not.toContain('No messages yet');
+
+    // Not exhausted: the page that failed is still there to be fetched.
+    service.failPages.clear();
+    service.pages.set(1, [message(1)]);
+    service.calls.length = 0;
+    scrollToBottom(list());
+    await settle();
+
+    expect(service.calls).toEqual([1]);
+    expect(list().querySelectorAll('.grovs-item')).toHaveLength(1);
+    ui.close();
+  });
+
+  // `exhausted` and `isLoading` are shared with whatever list replaced the one
+  // the request belonged to. A closed modal's empty final page marked the
+  // reopened list exhausted, and page two never loaded again.
+  it('lets a request from a closed modal not exhaust the list that replaced it', async () => {
+    const service = new StubMessagesService();
+    service.pages.set(1, [message(1)]);
+    service.pages.set(2, []);
+
+    const ui = uiOver(service);
+    await ui.showMessagesList();
+
+    // Page two is requested, then the modal closes before it answers.
+    service.blockNext();
+    scrollToBottom(list());
+    ui.close();
+
+    service.pages.set(2, [message(2)]);
+    await ui.showMessagesList();
+    service.releaseHeld();
+    await settle();
+
+    service.calls.length = 0;
+    scrollToBottom(list());
+    await settle();
+
+    expect(service.calls).toContain(2);
+    expect(list().querySelectorAll('.grovs-item')).toHaveLength(2);
+    ui.close();
   });
 });

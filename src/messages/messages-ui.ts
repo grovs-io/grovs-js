@@ -60,6 +60,9 @@ export class MessagesUI {
    *  and close() must not reach across and remove that one's. */
   private readonly ownModals = new Set<HTMLElement>();
   private unread = 0;
+  /** Set once the server total lands: it covers pages that were never loaded,
+   *  so the per-row tally must stop adding to it. */
+  private unreadFromServer = false;
   private badge: HTMLElement | null = null;
   /** A repeated page reads as exhaustion instead of looping the auto-fill. */
   private readonly renderedIds = new Set<number>();
@@ -178,8 +181,10 @@ export class MessagesUI {
     this.listElement = list;
     this.badge = badge;
     this.unread = 0;
+    this.unreadFromServer = false;
     this.renderedIds.clear();
     this.page = 1;
+    this.isLoading = false;
     this.exhausted = false;
     this.ensureEscListener();
     closeButton.focus();
@@ -188,7 +193,10 @@ export class MessagesUI {
     // The server total covers unloaded pages; the per-row tally set during
     // rendering stays when the request fails or a newer open owns the badge.
     const serverCount = await this.service.fetchUnreadCount();
-    if (serverCount !== null && this.badge === badge) this.setUnread(serverCount);
+    if (serverCount !== null && this.badge === badge) {
+      this.setUnread(serverCount);
+      this.unreadFromServer = true;
+    }
   }
 
   openPage(message: GrovsMessage): void {
@@ -266,6 +274,7 @@ export class MessagesUI {
     this.listElement = null;
     this.badge = null;
     this.unread = 0;
+    this.unreadFromServer = false;
   }
 
   /**
@@ -294,14 +303,33 @@ export class MessagesUI {
         list.appendChild(skeleton);
       }
     }
-    const messages = await this.service.getMessages(this.page);
-    this.isLoading = false;
-    if (messages.length === 0) this.exhausted = true;
+    const messages = await this.service.fetchMessages(this.page);
 
-    // The modal may have been closed, or the SDK disabled or reset, while the
-    // request was in flight. Rendering into a detached list is harmless but
-    // rendering into a live one after a stop is not.
+    // Before any state is touched: the modal may have closed while this was in
+    // flight, and `isLoading` and `exhausted` belong to whatever list replaced
+    // it — an empty final page would strand the new one on page one.
     if (this.listElement !== list) return;
+
+    this.isLoading = false;
+
+    // null is "the request failed", which the array return cannot express.
+    // Reading it as "no messages" told the visitor their inbox was empty when
+    // the network was down, and marked a list exhausted that had never loaded.
+    if (messages === null) {
+      if (this.page === 1) {
+        list.replaceChildren();
+        const failed = this.doc.createElement('div');
+        failed.className = 'grovs-empty';
+        failed.textContent = 'Messages could not be loaded.';
+        list.appendChild(failed);
+      }
+      // Give the page back: the scroll handler's increment then retries the
+      // page that failed instead of skipping past it.
+      this.page -= 1;
+      return;
+    }
+
+    if (messages.length === 0) this.exhausted = true;
 
     if (this.page === 1) list.replaceChildren();
 
@@ -331,7 +359,9 @@ export class MessagesUI {
 
     for (const message of fresh) {
       this.renderedIds.add(message.id);
-      if (!message.read) this.setUnread(this.unread + 1);
+      // Only until the server total arrives; it already counts the pages that
+      // are not loaded yet, so adding to it overshoots.
+      if (!message.read && !this.unreadFromServer) this.setUnread(this.unread + 1);
       list.appendChild(this.renderRow(message));
     }
     this.logger.info(`Rendered ${fresh.length} message(s) on page ${this.page}.`);
