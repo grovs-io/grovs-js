@@ -95,9 +95,14 @@ test.describe('Grovs SDK end to end', () => {
     await page.getByRole('button', { name: 'showMessagesList()' }).click();
 
     await expect(page.locator('#Grovs-modal')).toBeAttached();
+    // The modal mounts with skeletons and fills in when the fetch resolves,
+    // so waiting on the host alone counts rows that are not there yet.
+    // Playwright's locators pierce shadow roots, which is what makes this
+    // wait possible — and is exactly why the assertion below cannot use them.
+    await expect(page.locator('#Grovs-modal .grovs-item').first()).toBeAttached();
 
-    // Playwright's locators pierce shadow roots by design, so the isolation
-    // claim has to be checked with the real DOM API the host page would use.
+    // Checked with the real DOM API a host page would use, not a locator:
+    // the claim is that the host document cannot see into the shadow root.
     const visibility = await page.evaluate(() => ({
       fromHostDocument: document.querySelectorAll('.grovs-item').length,
       fromShadowRoot:
