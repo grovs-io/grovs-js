@@ -1,9 +1,68 @@
 # Changelog
 
-## Unreleased
+## 2.0.0 — 2026-09-10
+
+A TypeScript rewrite, bringing the JS SDK to behavioural parity with the iOS
+SDK. Existing v1 code keeps working — see [MIGRATION.md](MIGRATION.md) before
+upgrading, which covers the one behavioural break: `userIdentifier()` and
+`userAttributes()` returned each other's values in v1 and now return their own.
+
+### Added
+
+- System events with the iOS trigger rules and cadence, batched to
+  `/events/batch` with retry, a 1,000-event cap and a 7-day staleness cutoff.
+- Sessions shared across tabs, rotating after 30 minutes of combined idle.
+- `track`, `trackScreenView`, `setGlobalTags`, `setScreenAliases`, and
+  automatic SPA screen tracking with `screenNameProvider`.
+- `linkDetails`, and the remaining seven `generateLink` parameters.
+- `logCustomPurchase` (Grovs Enterprise backends only).
+- `requireConsent` / `grantConsent()` / `reset()`, and `flush()`.
+- Errors surface through an `onError` callback instead of `console.log`.
+- ESM, CJS, IIFE and `.d.ts` builds; the package now publishes only `dist/`.
+- Server-side rendering no longer throws on import.
+- The messages UI is redesigned (themed card, unread badge, skeleton loading,
+  empty state, keyboard and Escape support) and configurable via the new
+  `messagesTheme` option on `configure()` or `--grovs-*` CSS custom
+  properties. See "Styling the messages UI" in the README.
+- `generateLink()` accepts `copyToClipboardiOS` and `copyToClipboardAndroid`,
+  which ask the Grovs preview page to copy the link so a fresh mobile install
+  can be matched back to it. Omitting an option leaves the link on the project
+  default; `false` is an explicit override. The web SDK never reads the
+  clipboard itself — that happens in the iOS and Android SDKs after install.
+
+### Changed
+
+- `PROJECT-KEY` replaces the `PROJECT_KEY` header. No action needed — nginx
+  drops underscored headers by default, so this removes a latent 403.
+- The messages modal renders in a shadow root and no longer loads a
+  third-party font.
+- The event queue persists on a debounce rather than re-serialising itself on
+  every enqueue.
 
 ### Fixed
 
+- `userIdentifier()` and `userAttributes()` returned each other's values. If
+  you compensated for this, remove the workaround.
+- No event of any type was ever emitted: the event queue's `addEvent()` had no
+  callers, so web reported zero installs, opens and engagement time.
+- The stored deep link path was deleted as a side effect of reading it, while
+  three call sites read it per page load — so all but the first saw nothing.
+- `createLink` reported an error when unauthenticated and then issued the
+  request anyway, so one call could produce both an error and a success.
+- Queued events were removed by object identity, which does not survive the
+  JSON round trip a page reload performs.
+- The messages modal painted its backdrop red — a debug line left in place.
+- Message titles were interpolated into `innerHTML`, so a title could inject
+  markup into the host page.
+- Automatic message display was implemented and commented out.
+- The README advertised TypeScript types that did not exist.
+- Purchases and custom link redirects were sent under field names the backend
+  does not read, so both were silently dropped.
+- Message bodies rendered blank: the backend sends `access_url` without a
+  scheme and the URL guard rejected it.
+- Deep link attribution now also accepts the legacy `linksquared` query
+  parameter and case-mangled parameter names.
+- Messages pagination stalled when the first page did not overflow the list.
 - `setUserAttributes()` called before `configure()` finished cleared the
   server's existing user identifier. Identifier and attributes are now
   tracked separately, and whichever was not set locally is adopted.
@@ -219,76 +278,3 @@
   exit flush settles and persists whatever it sends before the request
   leaves — a visitor can close the tab while the attribution lookup is still
   open.
-
-### Added
-
-- `generateLink()` accepts `copyToClipboardiOS` and `copyToClipboardAndroid`,
-  which ask the Grovs preview page to copy the link so a fresh mobile install
-  can be matched back to it. Omitting an option leaves the link on the project
-  default; `false` is an explicit override. The web SDK never reads the
-  clipboard itself — that happens in the iOS and Android SDKs after install.
-
-## 2.0.0
-
-### Added
-
-- The messages UI is redesigned (themed card, unread badge, skeleton loading,
-  empty state, keyboard and Escape support) and configurable via the new
-  `messagesTheme` option on `configure()` or `--grovs-*` CSS custom
-  properties. See "Styling the messages UI" in the README.
-
-### Fixed
-
-- Purchases and custom link redirects were sent under field names the backend
-  does not read, so both were silently dropped.
-- Message bodies rendered blank: the backend sends `access_url` without a
-  scheme and the URL guard rejected it.
-- Deep link attribution now also accepts the legacy `linksquared` query
-  parameter and case-mangled parameter names.
-- Messages pagination stalled when the first page did not overflow the list.
-
-## 2.0.0-alpha.1
-
-A TypeScript rewrite bringing the JS SDK to behavioural parity with the iOS
-SDK. Existing v1 code keeps working — see [MIGRATION.md](MIGRATION.md).
-
-### Fixed
-
-- `userIdentifier()` and `userAttributes()` returned each other's values. If
-  you compensated for this, remove the workaround.
-- No event of any type was ever emitted: the event queue's `addEvent()` had no
-  callers, so web reported zero installs, opens and engagement time.
-- The stored deep link path was deleted as a side effect of reading it, while
-  three call sites read it per page load — so all but the first saw nothing.
-- `createLink` reported an error when unauthenticated and then issued the
-  request anyway, so one call could produce both an error and a success.
-- Queued events were removed by object identity, which does not survive the
-  JSON round trip a page reload performs.
-- The messages modal painted its backdrop red — a debug line left in place.
-- Message titles were interpolated into `innerHTML`, so a title could inject
-  markup into the host page.
-- Automatic message display was implemented and commented out.
-- The README advertised TypeScript types that did not exist.
-
-### Added
-
-- System events with the iOS trigger rules and cadence, batched to
-  `/events/batch` with retry, a 1,000-event cap and a 7-day staleness cutoff.
-- Sessions shared across tabs, rotating after 30 minutes of combined idle.
-- `track`, `trackScreenView`, `setGlobalTags`, `setScreenAliases`, and
-  automatic SPA screen tracking with `screenNameProvider`.
-- `linkDetails`, and the remaining seven `generateLink` parameters.
-- `logCustomPurchase` (Grovs Enterprise backends only).
-- `requireConsent` / `grantConsent()` / `reset()`, and `flush()`.
-- Errors surface through an `onError` callback instead of `console.log`.
-- ESM, CJS, IIFE and `.d.ts` builds; the package now publishes only `dist/`.
-- Server-side rendering no longer throws on import.
-
-### Changed
-
-- `PROJECT-KEY` replaces the `PROJECT_KEY` header. No action needed — nginx
-  drops underscored headers by default, so this removes a latent 403.
-- The messages modal renders in a shadow root and no longer loads a
-  third-party font.
-- The event queue persists on a debounce rather than re-serialising itself on
-  every enqueue.

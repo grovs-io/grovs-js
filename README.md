@@ -191,6 +191,13 @@ Grovs.userIdentifier;  // "user-42"
 Grovs.userAttributes;  // { plan: "pro", seats: 5 }
 ```
 
+Both are safe to call before `configure()` resolves. Whichever you set locally
+wins; the other is adopted from the server if it has one.
+
+`Grovs.isAuthenticated()` reports whether the SDK has authenticated. It is
+`false` before `configure()` resolves, after `reset()`, and while a transient
+failure is being retried.
+
 ## Tracking events
 
 ```javascript
