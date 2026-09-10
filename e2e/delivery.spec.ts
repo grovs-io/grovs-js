@@ -209,7 +209,6 @@ test.describe('real delivery', () => {
 
   test('the final time_spent reaches the server through a real tab close', async ({ page }) => {
     await configureAgainst(page, backend, 'close-key');
-    await track(page, 'before_close');
     // time_spent counts whole seconds visible, so the page must live past
     // one. A headless engine under load can flip the page hidden and back
     // during the dwell, which restarts that count; the page records whether
@@ -225,8 +224,16 @@ test.describe('real delivery', () => {
     const stayedVisible =
       (await page.evaluate(() => (window as unknown as { __flips: number }).__flips)) === 0 &&
       (await page.evaluate(() => document.visibilityState)) === 'visible';
-    // Closed before the first-batch leeway (5s) fires, so everything the page
-    // produced has to leave in the keepalive request the hide sends.
+
+    // Tracked *after* the dwell, so the scheduled five-second batch cannot
+    // have carried it away first. That matters: this test is about what the
+    // close itself delivers, and if the tick takes before_close then
+    // time_spent travels alone in the keepalive — a weaker thing to assert,
+    // and the shape that failed on CI.
+    await track(page, 'before_close');
+    // Both events are now queued together, so the keepalive the hide sends
+    // carries them as one batch: either it lands or it does not, and the
+    // assertions below stay consistent either way.
     await page.close();
 
     await expect.poll(() => backend.delivered(), { timeout: 10_000 }).toEqual(
