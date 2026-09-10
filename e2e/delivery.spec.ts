@@ -234,24 +234,35 @@ test.describe('real delivery', () => {
     // that nothing is lost: an unacknowledged batch stays on disk and the
     // next page load sends it. Asserting the optimistic half alone is what
     // made this test fail on CI while the SDK was behaving correctly.
-    await new Promise((resolve) => setTimeout(resolve, 3_000));
-    if (!backend.delivered().includes('before_close')) {
+    let arrived = false;
+    for (let attempt = 0; attempt < 20 && !arrived; attempt += 1) {
+      arrived = backend.delivered().includes('before_close');
+      if (!arrived) await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+
+    // A fresh page load emits its own launch events, so whether one was needed
+    // changes the arithmetic below.
+    let fellBack = false;
+    if (!arrived) {
+      fellBack = true;
       const next = await context.newPage();
       await configureAgainst(next, backend, 'close-key');
       await flush(next);
     }
 
     const delivered = backend.delivered();
-    const detail = `delivered=${JSON.stringify(delivered)}`;
+    const detail = `delivered=${JSON.stringify(delivered)} fellBack=${fellBack}`;
     expect(delivered, detail).toEqual(expect.arrayContaining(['app_open', 'before_close']));
 
-    // And exactly once, whichever route it took.
+    // Exactly once, whichever route it took. before_close is the event under
+    // test and is tracked once; app_open comes once per page load, so a
+    // fallback page legitimately adds a second.
     const counts = delivered.reduce<Record<string, number>>((acc, name) => {
       acc[name] = (acc[name] ?? 0) + 1;
       return acc;
     }, {});
     expect(counts['before_close'], `before_close: ${detail}`).toBe(1);
-    expect(counts['app_open'], `app_open: ${detail}`).toBe(1);
+    expect(counts['app_open'], `app_open: ${detail}`).toBe(fellBack ? 2 : 1);
     expect(counts['time_spent'] ?? 0, `time_spent: ${detail}`).toBeLessThanOrEqual(1);
   });
 
