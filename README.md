@@ -128,6 +128,17 @@ Grovs.lastReceivedPayload();
 Grovs.allReceivedPayloadsSinceStartup();
 ```
 
+The callback runs when a lookup returns a payload object; a missing payload
+does not trigger it. With `requireConsent: true`, the lookup and callback wait
+for `grantConsent()`, while the URL's link token is captured in memory first.
+
+Refreshing with `?Grovs=...` (or the legacy `?linksquared=...`) still in the URL
+resolves that link again and delivers its payload to the new page again. The
+SDK consumes the stored token after a successful lookup but leaves the URL
+unchanged. If your app handles a link only once, remove its query parameter
+after handling it and guard any action that must not repeat. Without a URL
+token, the backend can still return a payload through deferred matching.
+
 ## Generating links
 
 ```javascript
@@ -188,7 +199,7 @@ Grovs.trackScreenView("Checkout", { section: "payment" });
 ```
 
 Custom events carry the most recently viewed screen as `screen_name`, so they
-can be segmented by screen.
+can be segmented by screen. Screen names are capped at 255 characters.
 
 **Event names** must be non-empty and must not be a reserved system name
 (`install`, `reinstall`, `app_open`, `view`, `open`, `time_spent`,
@@ -232,6 +243,10 @@ Grovs.setScreenAliases({
   "/checkout": "Checkout",
 });
 ```
+
+When several patterns match, the more specific one wins regardless of order:
+more literal text first, then `:param` over `*`. A bare `*` is a catch-all
+that every other pattern beats.
 
 Global tags attach to every event until cleared:
 
@@ -315,8 +330,15 @@ await Grovs.logCustomPurchase({
   currency: "USD",
   productID: "com.acme.coins.100",
   startDate: new Date(),    // optional
+  transactionID: "order-8842",  // optional, but pass yours — see below
 });
 ```
+
+The backend deduplicates purchases on the transaction id, so passing your own
+order or payment id makes the call safe to repeat: a retry after a timeout,
+or a double-submitted checkout, is counted once. Omit it and the SDK mints one
+per call, which covers its own network retries but cannot recognise the same
+purchase sent from a later page load.
 
 > Purchase events require a Grovs Enterprise backend (`GROVS_EE=true`). On a
 > standard deployment the endpoint does not exist and this reports
@@ -337,14 +359,46 @@ await Grovs.grantConsent();
 Grovs.reset();
 ```
 
+`reset()` returns the SDK to its pre-consent state and **stops tracking**. It
+does not re-authenticate on its own, which is the point: with
+`requireConsent: true` the visitor has withdrawn permission. To start again,
+call `configure()` (then `grantConsent()` if you require consent).
+
 ### Delivery
 
-Events are queued, persisted to `localStorage`, and sent in batches of 50 —
-five seconds after startup, then every 30 seconds, and on tab close. Failed
-requests are attempted up to three times total, with exponential backoff and
-full jitter between attempts; events
-the backend rejects as permanently invalid are dropped rather than retried.
-The queue holds 1,000 events and discards anything older than seven days.
+Events are queued, persisted to `localStorage`, and sent in batches of 50.
+The first batch goes as soon as `configure()` has authenticated and resolved
+attribution, and it carries anything an earlier visit left undelivered, so a
+short visit does not depend on the tab-close flush. After that they batch
+every five seconds, immediately at 50 events, and again when the page is
+hidden.
+
+Failed requests are attempted up to three times, with exponential backoff and
+full jitter. A `Retry-After` longer than a request will wait ends the retries
+and holds the scheduled batches for the interval the server named; an
+explicit `flush()` still sends.
+
+`flush()` joins a delivery already in progress rather than starting a second
+one. If that delivery is a scheduled batch and the backend throttles it,
+`flush()` resolves with events still queued — it waits for the send in
+flight, not for the queue to empty. Call it again, or let the next scheduled
+batch carry them once the server's interval has passed. Events the backend rejects as permanently
+invalid are dropped rather than retried. The queue holds 1,000 events, or one
+million characters, and discards anything older than seven days.
+
+## What the SDK collects
+
+`configure()` authenticates and, in the same request, reports a device
+fingerprint used to match deferred deep links: user agent, screen size,
+timezone, language, and the WebGL vendor and renderer strings. It also reads
+and writes a visitor identifier in a cookie and in `localStorage`. Tracked
+events carry the event name, your properties and tags, a session id, and the
+attribution path the visit arrived on.
+
+With the default `requireConsent: false` this happens as soon as you call
+`configure()`. If you need it gated behind a banner, use
+[Consent](#consent) — with `requireConsent: true` nothing is written to the
+device and no request leaves until `grantConsent()`.
 
 ## Errors
 
@@ -382,6 +436,37 @@ Grovs.setDebugLevel("info");
   regardless of the expiry requested. That covers visitors returning within the
   window, but ITP can still evict script-writable storage for genuinely dormant
   ones — so Safari install counts carry a small known over-count.
+- **Delivery is at-least-once.** The final batch is sent with `keepalive`
+  when the page is hidden and stays stored until acknowledged, so a page that
+  goes away before the answer sends it again from the next load. No batch is
+  dropped before an acknowledgement. Events can still be discarded for the
+  documented reasons below: seven days old, evicted by the queue caps, or
+  never written because the browser refused storage.
+  A re-send is byte-identical and carries the same `event_id`, so a backend
+  that deduplicates on it counts the event once. **Grovs cloud does.** If you
+  point `baseURL` at your own backend, deduplicating on `event_id` is your
+  responsibility; without it, retries are counted twice.
+- **One known exception to "byte-identical", across tabs.** An event is
+  attributed by the page that created it, and only that page. A second tab
+  sharing the queue can send a copy of that event before its own page has
+  settled its attribution, and the two copies then differ in the campaign
+  they carry. Grovs cloud's `event_id` covers the resolved campaign, so those
+  two are not recognised as the same event and one visit can be counted twice
+  under two campaigns. It needs a second tab, opened on a campaign link, while
+  the first tab's attribution is still resolving. Closing it properly needs
+  per-tab queue ownership, which is not in this release.
+- **`configure()` resolves `false` on a transient failure** (no connection,
+  timeout, 429, 5xx) while the SDK retries in the background, on `online` and
+  at 30-second intervals, up to three times. Events tracked meanwhile queue.
+- **Multiple tabs share one queue** without atomic ownership. A tab opened
+  mid-visit may send events the first tab also sends. Those copies are
+  identical and `event_id` dedup collapses them, except in the attribution
+  case above. Because the shared write is read-merge-write and `localStorage`
+  has no compare-and-swap, two tabs writing in the same instant can still
+  lose an event that neither has delivered.
+- **Stored state is per project.** The queue, session and counters are keyed
+  by project (and separately for `testEnvironment`), so switching projects on
+  one origin does not carry events across. The visitor identifier is shared.
 - **Purchases require Enterprise**, as above.
 - **In-app purchase logging** has no web equivalent; there is no StoreKit.
   `logCustomPurchase` covers every web payment flow.
@@ -393,6 +478,7 @@ npm test              # typecheck, lint, unit tests, coverage gate
 npm run verify        # the above plus build, size budget, export shapes, E2E
 npm run demo          # QA harness at http://localhost:5174/demo/
 npm run test:live     # every flow against a real backend (needs a key)
+npm run test:safari   # native installed Safari on macOS, local test server
 ```
 
 The demo runs stubbed by default — no backend needed — and can be switched to
@@ -400,6 +486,40 @@ a real one. `npm run test:live` drives it through every flow against a live
 project: create a link, arrive through it, resolve the payload, deliver events
 and confirm the backend accepted them, messages, identity, purchases. See
 [demo/README.md](demo/README.md).
+
+The browser suite includes complete consent/message journeys, payload delivery
+on refresh, responses arriving after reset, automatic messages, and sandboxed
+message links opening a usable checkout window. These use controlled HTTP
+responses; `e2e/delivery.spec.ts` separately checks real HTTP receipt. They run
+in Chromium, WebKit and Firefox with no retries.
+They start a fresh server on port 4175, separate from the demo on port 5174,
+so a running dev server cannot serve a stale SDK bundle. Live tests require
+`http://localhost:4175` in the project's linked domains and CORS configuration.
+For concurrent local runs, set `GROVS_E2E_PORT` to a free port and give
+Playwright separate output/report directories (`--output` and
+`PLAYWRIGHT_HTML_OUTPUT_DIR`). Live projects must allow the overridden origin.
+
+On a browser-test failure, `test-results/` contains a screenshot and trace;
+`playwright-report/` contains the HTML report. Open it with
+`npx playwright show-report`. CI uploads these folders on failure.
+An explicit `npm run test:live` builds the SDK and fails if
+`GROVS_LIVE_API_KEY` is missing; the normal verification suite needs no key.
+
+`npm run test:safari` uses macOS's bundled `safaridriver` to run the built SDK
+in the installed Safari. Enable **Safari → Settings → Developer → Allow remote
+automation** first. It opens an isolated automation window; keep that window
+in front during the tab-close test. It needs no project key and sends all SDK
+traffic to a local HTTP server. Failed setup fails the command rather than
+silently skipping tests.
+
+The native Safari suite checks consent, request headers and browser details,
+deep-link callbacks across refresh and delayed consent,
+automatic batching, identity recovery after cookie deletion, full storage
+loss, refused storage writes, retries, unchanged replay after reload, and
+server receipt after a real tab close. Storage deletion/refusal is injected:
+this tests recovery from eviction, not Safari's multi-day ITP eviction policy.
+The IP assertion checks the local connection address; production proxy IP
+forwarding must be verified against the deployed backend separately.
 
 ## Further assistance
 

@@ -39,14 +39,27 @@ export class CookieStorage implements Storage {
       const eq = trimmed.indexOf('=');
       if (eq === -1) continue;
       if (trimmed.slice(0, eq) !== key) continue;
-      return decodeURIComponent(trimmed.slice(eq + 1));
+      // A value the SDK did not write can be undecodable; treating it as
+      // absent lets the localStorage mirror take over instead of the throw
+      // taking the constructor down.
+      try {
+        return decodeURIComponent(trimmed.slice(eq + 1));
+      } catch {
+        continue;
+      }
     }
     return null;
   }
 
   set(key: string, value: string): boolean {
+    let encoded: string;
+    try {
+      encoded = encodeURIComponent(value);
+    } catch {
+      return false;
+    }
     const parts = [
-      `${key}=${encodeURIComponent(value)}`,
+      `${key}=${encoded}`,
       `expires=${FAR_FUTURE}`,
       'path=/',
       // Not Strict: the identifier must survive a Grovs link's cross-site redirect.
@@ -66,7 +79,10 @@ export class CookieStorage implements Storage {
 
   remove(key: string): void {
     const parts = [`${key}=`, 'expires=Thu, 01 Jan 1970 00:00:00 GMT', 'path=/'];
-    if (this.domain) parts.push(`domain=${this.domain}`);
     this.doc.cookie = parts.join(';');
+    // Both scopes: a v1 host-only cookie can sit beside the domain one, and
+    // browsers return the older one first — an id removed only from the
+    // domain scope would read back as erased-and-still-there.
+    if (this.domain) this.doc.cookie = [...parts, `domain=${this.domain}`].join(';');
   }
 }

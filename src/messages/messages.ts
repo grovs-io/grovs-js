@@ -22,6 +22,12 @@ export class MessagesService {
     return this.client.isActive() && this.client.isEnabled && this.client.isAuthenticated();
   }
 
+  /** Unlike `usable`, no authentication needed: a list that then reports
+   *  the failure is still worth showing. A disabled SDK shows nothing. */
+  get canShowUI(): boolean {
+    return this.client.isActive() && this.client.isEnabled;
+  }
+
   /**
    * Captures the lifecycle counter, so a response can be checked against the
    * identity that asked for it.
@@ -34,6 +40,12 @@ export class MessagesService {
   private inFlightGuard(): () => boolean {
     const generation = this.client.lifecycleGeneration;
     return () => this.usable && this.client.lifecycleGeneration === generation;
+  }
+
+  /** For UI work deferred past a wait: still the same visitor, still allowed. */
+  uiGuard(): () => boolean {
+    const generation = this.client.lifecycleGeneration;
+    return () => this.canShowUI && this.client.lifecycleGeneration === generation;
   }
 
   /** Distinguishes "no messages" from "request failed", which the array
@@ -101,16 +113,46 @@ export class MessagesService {
     if (!this.usable) return [];
     const valid = this.inFlightGuard();
     const response = await this.client.service.messagesForAutomaticDisplay();
-    if (!response.ok) return [];
     // Re-check after the await: setEnabled(false) during the request would
     // otherwise still pop modals onto a page that asked the SDK to stop, and a
     // late response must not open the previous visitor's messages.
     if (!valid()) return [];
+    if (!response.ok) {
+      this.client.log.reportError(
+        GrovsError.networkRequestFailed,
+        'Could not fetch the messages to display automatically.',
+      );
+      return [];
+    }
     return this.readNotifications(response.body);
   }
 
+  /** Validated per entry: one malformed record must not crash the list. */
   private readNotifications(body: unknown): GrovsMessage[] {
     const list = (body as Record<string, unknown> | null)?.['notifications'];
-    return Array.isArray(list) ? (list as GrovsMessage[]) : [];
+    if (!Array.isArray(list)) return [];
+    const messages: GrovsMessage[] = [];
+    for (const entry of list) {
+      const record = entry as Record<string, unknown> | null;
+      if (
+        record &&
+        typeof record === 'object' &&
+        typeof record['id'] === 'number' &&
+        typeof record['title'] === 'string' &&
+        typeof record['access_url'] === 'string'
+      ) {
+        messages.push({
+          id: record['id'],
+          title: record['title'],
+          subtitle: typeof record['subtitle'] === 'string' ? record['subtitle'] : '',
+          read: record['read'] === true,
+          access_url: record['access_url'],
+        });
+      }
+    }
+    if (messages.length < list.length) {
+      this.client.log.warn(`Ignored ${list.length - messages.length} malformed message(s).`);
+    }
+    return messages;
   }
 }

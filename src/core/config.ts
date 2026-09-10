@@ -4,6 +4,10 @@ import { SDK_VERSION } from '../version';
 
 export type DeeplinkCallback = (payload: Record<string, unknown>) => void;
 
+/** An unrecognised level used to rank above every message, silencing even
+ *  errors — the opposite of what someone raising the level wants. */
+const LOG_LEVELS = new Set<LogLevel>(['info', 'warn', 'error']);
+
 const DEFAULT_BASE_URL = 'https://sdk.sqd.link';
 const API_PATH = '/api/v1/sdk';
 
@@ -64,7 +68,7 @@ export function resolveConfig(input: GrovsConfig): ResolvedConfig {
     autoTrackScreenViews: input.autoTrackScreenViews ?? true,
     requireConsent: input.requireConsent ?? false,
     appVersion: input.appVersion?.trim() || SDK_VERSION,
-    debugLevel: input.debugLevel ?? 'error',
+    debugLevel: LOG_LEVELS.has(input.debugLevel ?? 'error') ? (input.debugLevel ?? 'error') : 'error',
     onDeeplink: input.onDeeplink ?? null,
     onError: input.onError ?? null,
   };

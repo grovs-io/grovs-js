@@ -327,24 +327,39 @@ describe('GrovsClient lifecycle wiring', () => {
     });
   });
 
-  // Spec A4: persistence is forced on pagehide *and* visibilitychange. Mobile
-  // Safari often fires only the latter before killing a background tab, so a
-  // hide that merely starts the async network flush leaves the debounced
-  // queue unwritten — and the tab's final events lost with it.
-  it('persists the queue when the tab is hidden', async () => {
+  // Spec A4: a hide is the last moment mobile Safari reliably gives a tab.
+  // The keepalive batch leaves then and outlives the tab, and what it carries
+  // stays on disk until acknowledged: a page gone before the answer sends it
+  // again from the next load, and the backend collapses the copy.
+  it('sends the keepalive batch when the tab is hidden and keeps it persisted until acknowledged', async () => {
     const { client, transport, storage } = make();
     transport.enqueue(AUTH_OK);
     await client.configure();
+    client.eventsHandler.onPathResolved(null);
 
     client.track('added_to_cart');
-
     Object.defineProperty(document, 'visibilityState', {
       value: 'hidden',
       configurable: true,
     });
+    transport.fallback = { ok: false, status: 0, body: null };
     document.dispatchEvent(new Event('visibilitychange'));
 
+    const sent = transport.requestsTo('/events/batch').pop();
+    expect(sent?.keepalive).toBe(true);
+    expect(JSON.stringify(sent?.body)).toContain('added_to_cart');
+    // In flight and on disk.
     expect(storage.get(QUEUE_STORAGE_KEY)).toContain('added_to_cart');
+
+    await client.flush();
+    // Refused: still on disk for the next page load.
+    expect(storage.get(QUEUE_STORAGE_KEY)).toContain('added_to_cart');
+
+    transport.fallback = { ok: true, status: 200, body: { accepted: 1, rejected: 0, errors: [] } };
+    client.eventsHandler.flushOnExit();
+    await client.flush();
+    // Acknowledged: gone.
+    expect(storage.get(QUEUE_STORAGE_KEY) ?? '[]').not.toContain('added_to_cart');
     client.dispose();
   });
 });

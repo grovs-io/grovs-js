@@ -7,6 +7,9 @@ import { DeeplinkResolver, STORED_PATH_KEY } from '../links/deeplink';
 import type { Storage } from '../storage/storage';
 import { MemoryStorage } from '../storage/memory-storage';
 import { resolveBulkStorage, SwitchableStorage } from '../storage/bulk-storage';
+import { LocalStorageAdapter } from '../storage/local-storage';
+import { ScopedStorage } from '../storage/scoped-storage';
+import { projectKey } from '../net/headers';
 import { IdentityStore, LINKSQUARED_STORAGE_KEY as IDENTITY_KEY } from '../storage/identity';
 import { PersistedQueue, QUEUE_STORAGE_KEY } from '../storage/persisted-queue';
 import { EventsHandler } from '../events/events-handler';
@@ -28,6 +31,7 @@ import {
   getPageIdentifier,
   getWindow,
   isBrowser,
+  getLocalStorage,
 } from './environment';
 import { resolveConfig, type GrovsConfig, type ResolvedConfig } from './config';
 import { Context } from './context';
@@ -61,6 +65,15 @@ const BULK_KEYS = [
  */
 const SWITCH_KEYS = BULK_KEYS.filter((key) => key !== QUEUE_STORAGE_KEY);
 
+/** The only legacy (unscoped) state carried into a project scope — see
+ *  adoptLegacyState. */
+const LEGACY_CARRIED: readonly string[] = [OPENS_KEY, LAST_START_KEY];
+
+/** Authentication retries after a network or server failure: bounded, so a
+ *  page left open does not poll a dead backend for ever. */
+const AUTH_RETRY_DELAY_MS = 30_000;
+const MAX_AUTH_RETRIES = 3;
+
 /** The same, minus the session: used when the durable store already holds a
  *  live one. A session is a person, not a tab (spec A6), so this tab's
  *  memory-only session must not be written over a sibling's active one. */
@@ -80,9 +93,20 @@ const SWITCH_KEYS_KEEPING_SESSION = SWITCH_KEYS.filter(
  */
 let pendingConsentStore: MemoryStorage | null = null;
 
-/** Test seam: the pending-consent store outlives individual clients. */
+/**
+ * Whether this page load has already emitted its launch events.
+ *
+ * `pipelineStarted` guards one client; the facade's second configure() builds
+ * a *new* one, which read the open counter again and reported a second
+ * app_open for the same visit — the React strict mode case the facade exists
+ * to absorb. Cleared by reset(), which is a new visitor by definition.
+ */
+const launchEmitted = new Set<string>();
+
+/** Test seam: both outlive individual clients. */
 export function __resetPendingConsentStore(): void {
   pendingConsentStore = null;
+  launchEmitted.clear();
 }
 
 /**
@@ -122,6 +146,8 @@ export class GrovsClient {
   private configureGeneration = 0;
   private disposed = false;
   private readonly storageInjected: boolean;
+  /** Namespaces bulk storage per project — see ScopedStorage. */
+  private readonly storageScope: string;
 
   /**
    * The attribution path for this visit.
@@ -142,13 +168,66 @@ export class GrovsClient {
    */
   private consentGranted: boolean;
   private readonly receivedPayloads: Record<string, unknown>[] = [];
-  /** True when identity was set before authentication finished, so it still
-   *  needs pushing. Mirrors shouldUpdateIdentifiers in v1's manager. */
-  private identityDirty = false;
+  /**
+   * Which identity fields the integrator has set and the backend has not yet
+   * acknowledged. Tracked per field: one flag for both let setUserAttributes()
+   * before authentication block the server's existing identifier from being
+   * adopted, and the push that followed then cleared it with sdk_identifier: null.
+   */
+  private readonly identityDirty = { identifier: false, attributes: false };
   /** Same catch-up for screen aliases set before authentication (spec B8). */
   private aliasesDirty = false;
+  /** As identityRevision: an older sync's success must not clear the flag
+   *  for a newer map. */
+  private aliasesRevision = 0;
   /** The tail of the identity-update chain — see pushIdentity. */
   private identityPush: Promise<void> = Promise.resolve();
+  /** Same for alias syncs: two in flight could be processed out of order. */
+  private aliasSync: Promise<void> = Promise.resolve();
+  private authRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private authRetries = 0;
+  /** Wall-clock deadline from a server's Retry-After, honoured by the timer
+   *  and by the reconnect alike. */
+  private authRetryNotBefore = 0;
+  /** Connectivity is back: drain what queued offline, or finish authenticating. */
+  private readonly onOnline = (): void => {
+    // A delay the *server* named holds even here: a reconnect that cancels
+    // the wait and fires immediately is the amplification Retry-After exists
+    // to prevent, and worse than the timer because every tab reconnects at
+    // once. Our own backoff does not hold — coming back online is exactly
+    // when a request that failed on a dead connection should be retried.
+    if (this.clock.now() < this.authRetryNotBefore) return;
+    if (this.context.authenticated) this.events.flushIfDue();
+    else this.retryAuthentication();
+  };
+  /**
+   * Another tab called reset(): its identity mirror was removed. This tab
+   * holds the same visitor in memory and would keep sending as them, and
+   * would write the queue it was told to erase back into storage. Listened
+   * for from construction to disposal, so a tab mid-authentication, disabled,
+   * or retrying is covered too.
+   *
+   * A throttled background tab can receive the event minutes late, after the
+   * other tab has authenticated again. The device then holds a new visitor,
+   * and wiping it would reset that tab in turn — so when the mirror already
+   * holds a value only this tab's memory is cleared.
+   */
+  private readonly onStorage = (event: StorageEvent): void => {
+    if (event.key !== IDENTITY_KEY || event.newValue !== null) return;
+    // A background tab can be handed this event minutes late, after this
+    // client has already authenticated as the *next* visitor. The event names
+    // the identity that was removed; if that is not the one held now, the
+    // reset it describes has already been lived through.
+    const removed = event.oldValue;
+    if (removed !== null && this.context.linksquaredId !== null && removed !== this.context.linksquaredId) {
+      return;
+    }
+    // No state gate: a tab waiting on an authentication retry, or not yet
+    // configured, still holds the erased identifier in memory and would send
+    // it — and the backend echoes what it is sent.
+    this.logger.info('Reset by another tab.');
+    this.resetState(this.identityStore?.get() === null);
+  };
   /** Bumped by every setter. An acknowledgement clears the dirty flag only
    *  when it carries the newest one — see sendIdentity. */
   private identityRevision = 0;
@@ -162,17 +241,19 @@ export class GrovsClient {
     this.autoStartEvents = deps.autoStartEvents ?? true;
     this.consentGranted = !this.config.requireConsent;
     this.storageInjected = deps.storage !== undefined;
+    this.storageScope = projectKey(this.config);
 
     // Bulk storage is localStorage or memory — never a cookie. See
     // resolveBulkStorage for why that distinction is load-bearing.
     //
     // Consent pending means memory only: nothing reaches the device until
     // grantConsent(), and the switch below repoints every holder at once.
+    // An injected store is a test harness and is used as given.
     const initialBulk = deps.storage
       ? deps.storage
       : this.consentGranted
-        ? resolveBulkStorage(this.logger)
-        : (pendingConsentStore ??= new MemoryStorage());
+        ? this.adoptLegacyState(resolveBulkStorage(this.logger))
+        : this.scoped((pendingConsentStore ??= new MemoryStorage()));
     this.storage = new SwitchableStorage(initialBulk);
 
     // An injected storage means a test harness. Otherwise the identifier
@@ -231,24 +312,38 @@ export class GrovsClient {
     this.lifecycle = new LifecycleTracker({
       clock: this.clock,
       onEngagement: (seconds) => this.events.log('time_spent', seconds),
-      onExit: () => this.events.flushOnExit(),
+      // pagehide fires first on every unload and visibilitychange follows
+      // (HTML's unloading steps), so the request goes out from the hide;
+      // Firefox drops requests issued from pagehide, and sending from both
+      // races the two handlers. Here only the debounced queue reaches disk.
+      onExit: () => this.queue.flushToStorage(),
       onForeground: () => {
         this.session.currentSessionId();
       },
       onHide: () => {
-        // Persist before flushing (spec A4): on mobile Safari a hidden tab is
-        // often killed with no pagehide, so the debounced queue must reach
-        // storage now — the async flush may never get to acknowledge.
+        // The keepalive batch first: it is what survives if this hide is the
+        // start of a close, and every browser gives the hidden transition
+        // more time than the pagehide. Then persist (spec A4): on mobile
+        // Safari a hidden tab is often killed with no pagehide.
+        this.events.flushOnExit();
         this.queue.flushToStorage();
-        void this.events.flush();
       },
     });
     this.screens = new AutoScreenTracker({
       aliases: this.aliases,
-      onScreen: (name) => this.custom.trackScreenView(name),
+      // Through the guarded wrapper: a provider or alias that is not a
+      // string would otherwise throw from a timer on every route change.
+      onScreen: (name) => this.trackScreenView(name),
     });
 
     this.context.linksquaredId = this.readIdentity();
+    // Both listeners live for the client's whole life, added and removed in
+    // exactly one place each. Adding one here and dropping it somewhere else
+    // is how the reconnect flush went quiet after an authentication retry.
+    // Neither acts on a client that is disabled, reset or retired: onOnline
+    // routes through flush(), which checks, and retryAuthentication checks.
+    getWindow()?.addEventListener('storage', this.onStorage);
+    getWindow()?.addEventListener('online', this.onOnline);
   }
 
   /**
@@ -275,7 +370,7 @@ export class GrovsClient {
     // One switch repoints the queue, session, deeplink resolver and counters
     // together. Migrating each holder separately is how the session and the
     // captured path previously got stranded on the memory store forever.
-    const durable = resolveBulkStorage(this.logger);
+    const durable = this.adoptLegacyState(resolveBulkStorage(this.logger));
     const sibling = hasActiveSession(durable, this.clock.now());
     const pendingSession = sibling ? this.session.currentSessionId() : null;
 
@@ -321,27 +416,46 @@ export class GrovsClient {
    * stops tracking. The SDK returns to its pre-consent state.
    */
   reset(): void {
+    this.resetState(true);
+  }
+
+  /** `wipeDurable` false clears this client's memory only — see onStorage. */
+  private resetState(wipeDurable: boolean): void {
     // Bump first: a pending authenticate or payload lookup must not land
     // after the clear and re-authenticate the client it just wiped.
     this.configureGeneration += 1;
+    // Before shutdown(), which persists: a stale queue written now would land
+    // in the store the new visitor already owns.
+    if (!wipeDurable) this.queue.discard();
     this.shutdown();
-    this.queue.clear();
-    this.session.reset();
-    for (const key of BULK_KEYS) this.storage.remove(key);
-    this.storage.remove(IDENTITY_KEY);
-    this.identityStore?.clear();
+    // The list on screen belongs to the visitor being cleared.
+    this.messagesUI?.()?.close();
+    if (wipeDurable) {
+      this.queue.clear();
+      this.session.reset();
+      for (const key of BULK_KEYS) this.storage.remove(key);
+      this.storage.remove(IDENTITY_KEY);
+      this.identityStore?.clear();
+      this.clearDurableState();
+    }
+    this.authRetries = 0;
     // Otherwise a later consent-pending client reads back exactly what this
     // call was supposed to erase.
     pendingConsentStore = null;
     this.context.reset();
     this.custom.resetDedup();
+    // The screen belongs to the visitor being cleared; the next screen view
+    // sets it again for the new one.
+    this.custom.resetScreenContext();
     // Or the next tracked event leaves under the previous configure()'s
     // permission, after the reset that was supposed to stop it.
     this.events.resetDelivery();
     this.pipelineStarted = false;
+    launchEmitted.delete(this.storageScope);
     this.initStarted = false;
     this.initComplete = false;
-    this.identityDirty = false;
+    this.identityDirty.identifier = false;
+    this.identityDirty.attributes = false;
     // aliasesDirty deliberately survives: the alias map is integrator
     // configuration, not user data — reset() does not clear this.aliases
     // either, and a pending dashboard sync should still happen on the next
@@ -360,7 +474,7 @@ export class GrovsClient {
       // one a replacement client picks up, or events tracked between this
       // reset and the next configure() are stranded on a store nobody reads.
       pendingConsentStore = new MemoryStorage();
-      this.storage.switchTo(pendingConsentStore, []);
+      this.storage.switchTo(this.scoped(pendingConsentStore), []);
       this.identityStore = null;
     }
 
@@ -406,6 +520,10 @@ export class GrovsClient {
     this.initStarted = true;
     this.initComplete = false;
 
+    // Read again, not only at construction: a reset in another tab since
+    // then removed the identifier, and sending it would recreate it.
+    if (!this.context.authenticated) this.context.linksquaredId = this.readIdentity();
+
     if (superseded()) return false;
 
     const response = await this.api.authenticate(this.deviceDetails());
@@ -416,12 +534,21 @@ export class GrovsClient {
     if (superseded()) return false;
 
     if (!response.ok) {
-      // Nothing was started that a later enable would need to finish, and a
-      // re-run would report the same failure a second time.
-      this.initStarted = false;
       this.reportAuthFailure(response.status, response.body);
+      if (isTransient(response.status)) {
+        // Still an initialization in progress: setEnabled(true) after a
+        // disable during the retry window re-runs it.
+        this.scheduleAuthRetry(response.retryAfterMs);
+      } else {
+        // Nothing was started that a later enable would need to finish, and
+        // a re-run would report the same failure a second time.
+        this.initStarted = false;
+      }
       return false;
     }
+    this.cancelAuthRetry();
+    this.authRetries = 0;
+    this.authRetryNotBefore = 0;
 
     if (superseded()) return false;
 
@@ -440,9 +567,11 @@ export class GrovsClient {
     // v1 (grovs_manager.js:66-67) assigned these two backwards. Anyone who
     // diagnosed that and read the opposite accessor on purpose is broken by
     // this fix — MIGRATION.md documents it.
-    if (!this.identityDirty) {
+    if (!this.identityDirty.identifier) {
       this.context.userIdentifier =
         typeof body['sdk_identifier'] === 'string' ? body['sdk_identifier'] : null;
+    }
+    if (!this.identityDirty.attributes) {
       this.context.userAttributes =
         body['sdk_attributes'] && typeof body['sdk_attributes'] === 'object'
           ? (body['sdk_attributes'] as Record<string, unknown>)
@@ -478,15 +607,11 @@ export class GrovsClient {
     // of this visit either way.
     if (resolved) this.deeplinks.consumeStoredPath();
 
-    if (this.identityDirty) void this.pushIdentity();
+    if (this.hasPendingIdentity()) void this.pushIdentity();
 
     // As with pushIdentity: the flag clears only on success, so a failed
     // sync is retried by the next configure() rather than dropped.
-    if (this.aliasesDirty) {
-      void this.aliases.sync(this.api, this.logger).then((ok) => {
-        if (ok) this.aliasesDirty = false;
-      });
-    }
+    if (this.aliasesDirty) void this.syncAliases();
 
     // Automatic display is a console setting, so it has to happen without the
     // integrator calling anything — that is what "automatic" means, and iOS
@@ -506,7 +631,9 @@ export class GrovsClient {
   }
 
   /** Set by the facade, which owns the DOM surface. */
-  messagesUI: (() => { displayAutomaticMessages: () => Promise<void> } | null) | null = null;
+  messagesUI:
+    | (() => { displayAutomaticMessages: () => Promise<void>; close: () => void } | null)
+    | null = null;
 
   /**
    * Emits the launch events and starts the flush timers.
@@ -523,6 +650,16 @@ export class GrovsClient {
     // History patch has the same guard for the same reason (spec A7).
     if (this.pipelineStarted) return;
     this.pipelineStarted = true;
+
+    if (launchEmitted.has(this.storageScope)) {
+      // A replacement client for the same visit: timers and listeners still
+      // need starting, the launch events do not.
+      this.events.startTimers();
+      this.lifecycle.start();
+      if (this.config.autoTrackScreenViews) this.screens.start();
+      return;
+    }
+    launchEmitted.add(this.storageScope);
 
     const opens = Number(this.storage.get(OPENS_KEY) ?? '0');
     const rawLastStart = this.storage.get(LAST_START_KEY);
@@ -544,16 +681,26 @@ export class GrovsClient {
 
   track(name: string, properties?: Record<string, unknown>, tags?: string[]): void {
     if (!this.enabled) return;
-    this.custom.track(name, properties, tags);
+    // An untyped caller passing the wrong shape gets a warning, not a throw
+    // out of their own handler.
+    try {
+      this.custom.track(name, properties, tags);
+    } catch (error) {
+      this.logger.warn(`track() ignored: ${String(error)}`);
+    }
   }
 
   trackScreenView(screenName: string, properties?: Record<string, unknown>): void {
     if (!this.enabled) return;
-    this.custom.trackScreenView(screenName, properties);
+    try {
+      this.custom.trackScreenView(screenName, properties);
+    } catch (error) {
+      this.logger.warn(`trackScreenView() ignored: ${String(error)}`);
+    }
   }
 
   setGlobalTags(tags: string[] | null): void {
-    this.custom.setGlobalTags(tags);
+    this.events.setGlobalTags(tags);
   }
 
   /** Enterprise deployments only; a 404 reports the reason (spec B4). */
@@ -564,15 +711,16 @@ export class GrovsClient {
 
   /** Syncs the map to the dashboard so aliases appear there too (spec B8). */
   setScreenAliases(aliases: Record<string, string>): void {
-    this.aliases.set(aliases);
-    if (this.context.authenticated) {
-      void this.aliases.sync(this.api, this.logger);
-    } else {
-      // Pushed by configure() once authentication completes; without this a
-      // map set alongside configure() resolves screens locally but never
-      // reaches the dashboard.
-      this.aliasesDirty = true;
+    if (!aliases || typeof aliases !== 'object') {
+      this.logger.warn('setScreenAliases() expects an object; ignored.');
+      return;
     }
+    this.aliases.set(aliases, this.logger);
+    // Pushed later otherwise: by configure() once authentication completes,
+    // or by setEnabled(true) — a disabled SDK sends nothing.
+    this.aliasesDirty = true;
+    this.aliasesRevision += 1;
+    if (this.enabled && this.context.authenticated) void this.syncAliases();
   }
 
   set screenNameProvider(provider: ScreenNameProvider | null) {
@@ -599,6 +747,65 @@ export class GrovsClient {
     this.events.stop();
     this.lifecycle.stop();
     this.screens.stop();
+    this.cancelAuthRetry();
+  }
+
+  /**
+   * A visitor who loads the page while their connection or the backend is
+   * down would otherwise stay unauthenticated until the next navigation;
+   * events queue meanwhile, but launch events and time_spent are lost.
+   */
+  private scheduleAuthRetry(retryAfterMs?: number): void {
+    if (this.authRetries >= MAX_AUTH_RETRIES) return;
+    const win = getWindow();
+    if (!win) return;
+    this.authRetries += 1;
+    // A throttled backend named a delay; waiting less than it asked for is
+    // the amplification Retry-After exists to prevent.
+    const delay = Math.max(AUTH_RETRY_DELAY_MS, retryAfterMs ?? 0);
+    if (retryAfterMs) this.authRetryNotBefore = this.clock.now() + retryAfterMs;
+    this.authRetryTimer = setTimeout(this.onOnline, delay);
+  }
+
+  private cancelAuthRetry(): void {
+    if (this.authRetryTimer !== null) clearTimeout(this.authRetryTimer);
+    this.authRetryTimer = null;
+  }
+
+  private retryAuthentication(): void {
+    this.cancelAuthRetry();
+    // initStarted is the question being asked: is there an initialization
+    // waiting to finish? reset() clears it, and reset() means stopped until
+    // the integrator configures again — coming back online is not consent.
+    if (!this.initStarted) return;
+    if (this.disposed || !this.enabled || this.context.authenticated) return;
+    this.logger.info('Retrying authentication.');
+    void this.configure();
+  }
+
+  /**
+   * Everything on the device, whether or not this client has opened it: in
+   * consent mode the client sits on a memory store and has no identity
+   * store, but a previous visit's identifier and queue are still durable —
+   * and reset() promises they are gone. Legacy unscoped keys included.
+   */
+  private clearDurableState(): void {
+    if (this.storageInjected) return;
+    // No write probe first: a full store still allows removals, and the
+    // cookie does not depend on localStorage at all. Every call is guarded.
+    const durable = new LocalStorageAdapter();
+    const scoped = this.scoped(durable);
+    for (const key of BULK_KEYS) {
+      scoped.remove(key);
+      durable.remove(key);
+    }
+    // Every project's queue, not only this one's. The visitor identifier is
+    // deliberately shared across projects on an origin, so a queue left
+    // behind under another project is re-sent under whatever identity the
+    // next configure() mints — the previous visitor's events attributed to
+    // the new one, which is the opposite of what reset() promises.
+    removeScopedKeys(durable, BULK_KEYS);
+    if (!this.identityStore) new IdentityStore(this.config.cookieDomain).clear();
   }
 
   /**
@@ -612,7 +819,12 @@ export class GrovsClient {
    */
   dispose(): void {
     this.disposed = true;
+    // Queued identity and alias updates check the generation before they
+    // send; a retired client must fail that check.
+    this.configureGeneration += 1;
     this.shutdown();
+    getWindow()?.removeEventListener('storage', this.onStorage);
+    getWindow()?.removeEventListener('online', this.onOnline);
     // A response still in flight cannot be cancelled, but its handler can be
     // stopped from writing: otherwise a late batch acknowledgement persists
     // this client's stale snapshot over the replacement's queue.
@@ -625,6 +837,29 @@ export class GrovsClient {
 
   get sessionManager(): SessionManager {
     return this.session;
+  }
+
+  private scoped(store: Storage): Storage {
+    return new ScopedStorage(store, this.storageScope);
+  }
+
+  /**
+   * Builds written before storage was scoped left their state under bare
+   * keys. The launch counters carry over — losing them costs a returning
+   * visitor a spurious reinstall, since the identifier is shared and opens
+   * would read 0. Everything else (queue, session, path) belonged to
+   * whichever project wrote it, which cannot be known now, so it is dropped
+   * rather than sent under this one. Removal waits for a confirmed copy.
+   */
+  private adoptLegacyState(durable: Storage): Storage {
+    const scoped = this.scoped(durable);
+    for (const key of BULK_KEYS) {
+      const legacy = durable.get(key);
+      if (legacy === null) continue;
+      const carry = LEGACY_CARRIED.includes(key) && scoped.get(key) === null;
+      if (!carry || scoped.set(key, legacy)) durable.remove(key);
+    }
+    return scoped;
   }
 
   private readIdentity(): string | null {
@@ -646,11 +881,17 @@ export class GrovsClient {
 
   setUserIdentifier(value: string | null): void {
     this.context.userIdentifier = value;
+    this.identityDirty.identifier = true;
     this.markIdentityChanged();
   }
 
   setUserAttributes(value: Record<string, unknown> | null): void {
+    if (value !== null && typeof value !== 'object') {
+      this.logger.warn('setUserAttributes() expects an object or null; ignored.');
+      return;
+    }
     this.context.userAttributes = value;
+    this.identityDirty.attributes = true;
     this.markIdentityChanged();
   }
 
@@ -682,7 +923,8 @@ export class GrovsClient {
         // Only configure() consumed this before, and the facade's configure()
         // builds a *new* client — so an identifier set while stopped sat in
         // the context until the next page load read the server value over it.
-        if (this.identityDirty) void this.pushIdentity();
+        if (this.hasPendingIdentity()) void this.pushIdentity();
+        if (this.aliasesDirty) void this.syncAliases();
       }
 
       // Finish an initialization disabling interrupted, rather than resuming
@@ -761,12 +1003,38 @@ export class GrovsClient {
     return this.enabled;
   }
 
+  private hasPendingIdentity(): boolean {
+    return this.identityDirty.identifier || this.identityDirty.attributes;
+  }
+
+  /** The flag clears only on success, so a failed sync is retried by the
+   *  next configure() or setEnabled(true) rather than dropped. */
+  private syncAliases(): Promise<void> {
+    const generation = this.configureGeneration;
+    const revision = this.aliasesRevision;
+    const abandon = (): boolean =>
+      generation !== this.configureGeneration || !this.enabled || !this.canTransmit();
+    // The catch keeps the chain usable, as pushIdentity's does: one rejection
+    // would otherwise leave every later sync chained onto a rejected promise,
+    // silently sending nothing for the rest of the page's life.
+    this.aliasSync = this.aliasSync.then(async () => {
+      if (abandon()) return;
+      try {
+        const ok = await this.aliases.sync(this.api, this.logger, abandon);
+        if (ok && !abandon() && revision === this.aliasesRevision) this.aliasesDirty = false;
+      } catch {
+        this.logger.warn('Could not sync screen aliases to the dashboard.');
+      }
+    });
+    return this.aliasSync;
+  }
+
   private markIdentityChanged(): void {
-    // Set on every setter and cleared only by an acknowledgement, so the flag
-    // records the integrator's intent rather than being inferred from the
-    // context later — setUserIdentifier(null) is an instruction to clear, and
-    // reading the context back cannot tell that from "nothing pending".
-    this.identityDirty = true;
+    // The per-field flag is set by the setter and cleared only by an
+    // acknowledgement, so it records the integrator's intent rather than being
+    // inferred from the context later — setUserIdentifier(null) is an
+    // instruction to clear, and reading the context back cannot tell that
+    // from "nothing pending".
     this.identityRevision += 1;
     if (!this.enabled || !this.context.authenticated) return;
     void this.pushIdentity();
@@ -812,7 +1080,10 @@ export class GrovsClient {
     // leaves the change owed, which is what configure() and setEnabled(true)
     // pick up.
     if (response.ok) {
-      if (revision === this.identityRevision) this.identityDirty = false;
+      if (revision === this.identityRevision) {
+        this.identityDirty.identifier = false;
+        this.identityDirty.attributes = false;
+      }
       return;
     }
     this.logger.reportError(
@@ -885,6 +1156,13 @@ export class GrovsClient {
   }
 
   private reportAuthFailure(status: number, body: unknown): void {
+    // The first failure and the last retry reach onError; transient ones
+    // between are logged, so an outage is one report at each end rather than
+    // four. A permanent answer during a retry is reported: nothing follows it.
+    if (this.authRetries > 0 && this.authRetries < MAX_AUTH_RETRIES && isTransient(status)) {
+      this.logger.info(`Authentication retry ${this.authRetries} failed (HTTP ${status}).`);
+      return;
+    }
     const rawError = (body as Record<string, unknown> | null)?.['error'];
     // A 2xx only reaches here when the transport could not read the body, and
     // "HTTP 200" sends the integrator looking at a server that answered fine.
@@ -909,4 +1187,31 @@ export class GrovsClient {
 
     this.logger.reportError(GrovsError.authenticationFailed, serverMessage);
   }
+}
+
+/** Worth retrying: no connection, a timeout, throttling, or a server error. */
+function isTransient(status: number): boolean {
+  return status === 0 || status === 429 || status >= 500;
+}
+
+/**
+ * Removes every project's copy of the given keys.
+ *
+ * ScopedStorage writes `<key>:<project>`, so this enumerates the store rather
+ * than guessing project names. Guarded: a store can refuse enumeration the
+ * same way it refuses a write.
+ */
+function removeScopedKeys(durable: Storage, keys: readonly string[]): void {
+  const raw = getLocalStorage();
+  if (!raw) return;
+  const doomed: string[] = [];
+  try {
+    for (let i = 0; i < raw.length; i += 1) {
+      const key = raw.key(i);
+      if (key && keys.some((base) => key.startsWith(`${base}:`))) doomed.push(key);
+    }
+  } catch {
+    return;
+  }
+  for (const key of doomed) durable.remove(key);
 }

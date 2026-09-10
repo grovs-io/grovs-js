@@ -10,9 +10,14 @@
   "jsdelivr": "./dist/grovs.global.js",
   "exports": {
     ".": {
-      "types": "./dist/grovs.d.ts",
-      "import": "./dist/grovs.js",
-      "require": "./dist/grovs.cjs"
+      "import": {
+        "types": "./dist/grovs.d.ts",
+        "default": "./dist/grovs.js"
+      },
+      "require": {
+        "types": "./dist/grovs.d.cts",
+        "default": "./dist/grovs.cjs"
+      }
     },
     "./package.json": "./package.json"
   },
@@ -25,11 +30,13 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "npm run typecheck && npm run lint && vitest run --coverage",
-    "verify": "npm run test && npm run build && node scripts/check-size.mjs && node scripts/check-exports.mjs && playwright test --project=chromium",
+    "verify": "npm run test && npm run build && node scripts/check-size.mjs && node scripts/check-exports.mjs && npm run test:e2e:browsers",
+    "test:e2e:browsers": "playwright test --project=chromium --project=webkit --project=firefox",
+    "test:safari": "npm run build && node --test --test-concurrency=1 scripts/test-safari.mjs",
     "dev": "tsup --watch",
     "demo": "vite --port 5174 --strictPort",
-    "test:e2e": "npm run build && playwright test --project=chromium",
-    "test:live": "playwright test --project=live",
+    "test:e2e": "npm run build && npm run test:e2e:browsers",
+    "test:live": "npm run build && playwright test --project=live",
     "test:live:watch": "node scripts/live-watch.mjs"
   },
   "keywords": [

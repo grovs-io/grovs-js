@@ -18,11 +18,16 @@ export function buildHeaders(
     'Content-Type': 'application/json',
     PLATFORM: 'web',
     'SDK-VERSION': SDK_VERSION,
-    'PROJECT-KEY': config.testEnvironment ? `test_${config.apiKey}` : config.apiKey,
+    'PROJECT-KEY': projectKey(config),
   };
 
   if (identifier) headers['IDENTIFIER'] = identifier;
   if (context.linksquaredId) headers['LINKSQUARED'] = context.linksquaredId;
 
   return headers;
+}
+
+/** The value sent as PROJECT-KEY, which also scopes what the SDK stores. */
+export function projectKey(config: ResolvedConfig): string {
+  return config.testEnvironment ? `test_${config.apiKey}` : config.apiKey;
 }

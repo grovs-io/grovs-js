@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { scopedKey } from '../../src/storage/scoped-storage';
 import { GrovsClient, __resetPendingConsentStore } from '../../src/core/client';
 import { MessagesService } from '../../src/messages/messages';
 import { PersistedQueue } from '../../src/storage/persisted-queue';
@@ -192,7 +193,7 @@ describe('consent does not discard a queue from an earlier visit', () => {
     // A real timestamp: createdAt near epoch is correctly pruned as stale
     // before it can be sent, which would test the wrong thing.
     localStorage.setItem(
-      'grovs_events',
+      scopedKey('grovs_events', 'k'),
       JSON.stringify([
         { id: 'from-previous-visit', createdAt: Date.now(), event: 'app_open', sessionId: 's' },
       ]),
@@ -374,7 +375,7 @@ describe('consent merge survives the persist debounce', () => {
   // before the merge could read it.
   it('keeps both queues when consent is granted after the debounce', async () => {
     localStorage.setItem(
-      'grovs_events',
+      scopedKey('grovs_events', 'k'),
       JSON.stringify([
         { id: 'from-previous-visit', createdAt: Date.now(), event: 'app_open', sessionId: 's' },
       ]),
@@ -572,7 +573,7 @@ describe('the pending-consent store does not outlive its purpose', () => {
     granting.dispose();
 
     // A second consent-pending client must start clean.
-    localStorage.removeItem('grovs_events');
+    localStorage.removeItem(scopedKey('grovs_events', 'k'));
     const secondTransport = new FakeTransport();
     secondTransport.enqueue(AUTH_OK);
     const second = new GrovsClient(
@@ -1049,8 +1050,8 @@ describe('the session is a person, not a tab, across consent', () => {
   // ago and reporting one visit as two.
   it('joins a sibling tab\'s live session instead of replacing it', async () => {
     // Durable storage, because that is what consent migrates onto.
-    localStorage.setItem('grovs_session_id', 'sibling-session');
-    localStorage.setItem('grovs_session_activity', String(Date.now() - 1000));
+    localStorage.setItem(scopedKey('grovs_session_id', 'k'), 'sibling-session');
+    localStorage.setItem(scopedKey('grovs_session_activity', 'k'), String(Date.now() - 1000));
 
     const transport = new FakeTransport();
     transport.enqueue(AUTH_OK);
@@ -1063,7 +1064,7 @@ describe('the session is a person, not a tab, across consent', () => {
     await client.grantConsent();
     await client.flush();
 
-    expect(localStorage.getItem('grovs_session_id')).toBe('sibling-session');
+    expect(localStorage.getItem(scopedKey('grovs_session_id', 'k'))).toBe('sibling-session');
     const sent = transport
       .requestsTo('/events/batch')
       .flatMap((r) => (r.body as { events: Record<string, unknown>[] }).events);

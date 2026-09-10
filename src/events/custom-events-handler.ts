@@ -1,4 +1,4 @@
-import { ENRICHMENT_LIMITS, RESERVED_EVENT_NAMES } from '../contract/event-contract';
+import { RESERVED_EVENT_NAMES } from '../contract/event-contract';
 import type { Clock } from '../core/clock';
 import type { SessionManager } from '../core/session';
 import { randomUUID } from '../core/uuid';
@@ -6,6 +6,7 @@ import type { Logger } from '../logging/logger';
 import type { EventsHandler } from './events-handler';
 import type { QueuedEvent } from './event';
 import { sanitizeProperties } from './sanitize';
+import { truncate } from './enrich';
 
 export const SCREEN_VIEW_EVENT = 'screen_view';
 
@@ -31,13 +32,12 @@ export interface CustomEventsDeps {
 }
 
 /**
- * Custom events, screen views, and global tags.
+ * Custom events and screen views.
  *
  * Every event routes through EventsHandler.enqueue, which routes through
  * enrich() — no body is constructed here (spec A4/T12).
  */
 export class CustomEventsHandler {
-  private globalTags: string[] | null = null;
   /** Stamped onto custom events so they can be segmented by screen. */
   private currentScreenName: string | null = null;
 
@@ -69,7 +69,9 @@ export class CustomEventsHandler {
       return;
     }
 
-    this.enqueue(trimmed, properties, tags);
+    // Bounded here, not only at send: one unbounded name could exceed the
+    // queue's whole budget and cost the events queued before it.
+    this.enqueue(truncate(trimmed), properties, tags);
   }
 
   /**
@@ -81,7 +83,10 @@ export class CustomEventsHandler {
    * screen in a new session is a genuinely new view.
    */
   trackScreenView(screenName: string, properties?: Record<string, unknown>): void {
-    const trimmed = screenName?.trim() ?? '';
+    // Bounded before it becomes context: an oversized name would otherwise
+    // survive the 8 KB cap through the context fallback below and ride on
+    // every later custom event, all of which the backend then rejects.
+    const trimmed = truncate(screenName?.trim() ?? '');
     if (!trimmed) {
       this.deps.logger.warn('trackScreenView() requires a non-empty screen name.');
       return;
@@ -104,12 +109,12 @@ export class CustomEventsHandler {
     this.enqueue(SCREEN_VIEW_EVENT, properties, undefined, { screen_name: trimmed });
   }
 
-  setGlobalTags(tags: string[] | null): void {
-    this.globalTags = tags && tags.length > 0 ? [...tags] : null;
-  }
-
   resetDedup(): void {
     __resetScreenDedup();
+  }
+
+  resetScreenContext(): void {
+    this.currentScreenName = null;
   }
 
   private enqueue(
@@ -140,7 +145,7 @@ export class CustomEventsHandler {
     if (path) event.path = path;
     if (sanitized) event.properties = sanitized;
 
-    const merged = this.mergeTags(tags);
+    const merged = this.deps.events.mergeTags(tags);
     if (merged) event.tags = merged;
 
     this.deps.events.enqueue(event);
@@ -151,24 +156,5 @@ export class CustomEventsHandler {
     if (eventName === SCREEN_VIEW_EVENT) return undefined;
     if (!this.currentScreenName) return undefined;
     return { screen_name: this.currentScreenName };
-  }
-
-  /**
-   * Per-event tags take priority: when the combined count exceeds the cap,
-   * they are kept first and global tags fill what remains. The alternative —
-   * global tags crowding out the ones describing this specific event — loses
-   * the more informative half.
-   */
-  private mergeTags(tags: string[] | undefined): string[] | undefined {
-    const perEvent = tags ?? [];
-    const global = this.globalTags ?? [];
-    if (perEvent.length === 0 && global.length === 0) return undefined;
-
-    const merged = [...perEvent];
-    for (const tag of global) {
-      if (merged.length >= ENRICHMENT_LIMITS.maxTags) break;
-      if (!merged.includes(tag)) merged.push(tag);
-    }
-    return merged.slice(0, ENRICHMENT_LIMITS.maxTags);
   }
 }

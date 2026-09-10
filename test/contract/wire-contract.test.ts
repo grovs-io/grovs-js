@@ -18,7 +18,7 @@ import { FakeTransport } from '../helpers/fake-transport';
  * mode this file exists to prevent.
  *
  * Sources reconciled here: the iOS APIService/`toBackend()` output, the
- * backend's permitted params in `app/controllers/api/v1/sdk/*.rb`, and the
+ * backend's permitted params for the SDK endpoints, and the
  * enrichment table in spec A4.
  */
 

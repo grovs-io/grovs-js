@@ -283,15 +283,15 @@ describe('CustomEventsHandler.trackScreenView', () => {
 
 describe('CustomEventsHandler global tags', () => {
   it('attaches global tags to every event', () => {
-    const { custom, queue } = harness();
-    custom.setGlobalTags(['beta']);
+    const { custom, queue, events } = harness();
+    events.setGlobalTags(['beta']);
     custom.track('x');
     expect(queue.all()[0]?.tags).toEqual(['beta']);
   });
 
   it('merges per-event tags ahead of global ones', () => {
-    const { custom, queue } = harness();
-    custom.setGlobalTags(['global']);
+    const { custom, queue, events } = harness();
+    events.setGlobalTags(['global']);
     custom.track('x', undefined, ['specific']);
     expect(queue.all()[0]?.tags).toEqual(['specific', 'global']);
   });
@@ -299,8 +299,8 @@ describe('CustomEventsHandler global tags', () => {
   // Per-event tags describe this event; global tags describe everything. When
   // only some fit, the specific ones are the informative half.
   it('keeps per-event tags when the combined count exceeds 20', () => {
-    const { custom, queue } = harness();
-    custom.setGlobalTags(Array.from({ length: 20 }, (_, i) => `g${i}`));
+    const { custom, queue, events } = harness();
+    events.setGlobalTags(Array.from({ length: 20 }, (_, i) => `g${i}`));
     custom.track('x', undefined, ['specific']);
 
     const tags = queue.all()[0]?.tags ?? [];
@@ -309,16 +309,16 @@ describe('CustomEventsHandler global tags', () => {
   });
 
   it('does not duplicate a tag present in both', () => {
-    const { custom, queue } = harness();
-    custom.setGlobalTags(['shared']);
+    const { custom, queue, events } = harness();
+    events.setGlobalTags(['shared']);
     custom.track('x', undefined, ['shared']);
     expect(queue.all()[0]?.tags).toEqual(['shared']);
   });
 
   it('clears global tags with null', () => {
-    const { custom, queue } = harness();
-    custom.setGlobalTags(['beta']);
-    custom.setGlobalTags(null);
+    const { custom, queue, events } = harness();
+    events.setGlobalTags(['beta']);
+    events.setGlobalTags(null);
     custom.track('x');
     expect(queue.all()[0]?.tags).toBeUndefined();
   });

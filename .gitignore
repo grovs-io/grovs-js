@@ -7,14 +7,15 @@ dist/
 .DS_Store
 *.log
 
-# Un-ignore docs/.
-#
-# A global excludesFile (~/.gitignore_global) ignores docs/ in every repository.
-# For this project that would leave the v2 design spec under
-# docs/superpowers/specs/ and the docs/CONTEXT.md required by the Release
-# section outside version control entirely. A repository-local .gitignore takes
-# precedence over the global one, so this negation restores them.
-!docs/
+# docs/ is local working notes, not part of the published repository:
+# CONTEXT.md is the agent's context dump and docs/superpowers/ holds the
+# design spec and plans. A global excludesFile (~/.gitignore_global) already
+# ignores docs/ everywhere, but that only helps on this machine — this states
+# it in the repository so a fresh clone behaves the same way.
+docs/
+
+# Deferred-work notes: internal planning, and it references other repositories.
+TODOS.md
 
 # Un-ignore src/storage/ and test/storage/.
 #

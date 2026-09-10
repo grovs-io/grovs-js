@@ -106,12 +106,18 @@ describe('public facade', () => {
     Grovs.track('from_client_a');
     await Grovs.configure({ apiKey: 'k' });
 
+    // An unload is pagehide then the hide; the request leaves from the hide.
     window.dispatchEvent(new Event('pagehide'));
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
 
-    const queued = JSON.parse(localStorage.getItem('grovs_events') ?? '[]') as {
-      eventName?: string;
-    }[];
-    expect(queued.map((event) => event.eventName)).toContain('from_client_a');
+    // The replacement's exit flush carries the first client's event: it
+    // loaded it from the snapshot the outgoing client wrote.
+    const bodies = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.map((call) =>
+      String((call[1] as RequestInit | undefined)?.body ?? ''),
+    );
+    expect(bodies.some((body) => body.includes('from_client_a'))).toBe(true);
   });
 
   // The open list belongs to the visitor being cleared: its rows still open
@@ -158,7 +164,7 @@ describe('public facade', () => {
     expect(views).toHaveLength(1);
   });
 
-  // Two Grovs clients on one page is unsupported (docs/CONTEXT.md): it
+  // Two Grovs clients on one page is unsupported: it
   // double-counts auth, launch events, timers and sessions. Now that the v1
   // constructor and the v2 statics sit on the same export, mixing the two
   // eras is easy to do by accident — so it warns, once.

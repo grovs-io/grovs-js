@@ -10,6 +10,9 @@ export const STORED_PATH_KEY = 'Grovs_path';
  * legacy integration or a case-mangled URL (email scanners rewrite them)
  * still attributes instead of silently falling back to fingerprinting.
  */
+/** Generous for a token the backend generates, far under any storage quota. */
+const MAX_PATH_LENGTH = 512;
+
 function readPathParam(params: URLSearchParams): string | null {
   const exact = params.get(GROVS_QUERY_PARAM) ?? params.get(LEGACY_QUERY_PARAM);
   if (exact !== null) return exact;
@@ -49,7 +52,17 @@ export class DeeplinkResolver {
       return this.getStoredPath();
     }
 
-    if (value === null) return this.getStoredPath();
+    // An empty parameter is not a capture; storing it would erase a real one
+    // from an earlier page of the same visit.
+    if (value === null || value === '') return this.getStoredPath();
+
+    // A path is an opaque short token. Anything longer is not one, and this
+    // value comes straight from the address bar — one crafted link could
+    // otherwise fill the origin's storage quota during configure() and take
+    // the event queue and the session down with it.
+    if (value.length > MAX_PATH_LENGTH) {
+      return this.getStoredPath();
+    }
 
     // URLSearchParams already decodes once; v1 decoded a second time, which
     // corrupted any path containing a literal percent sign.

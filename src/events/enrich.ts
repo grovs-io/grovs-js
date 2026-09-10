@@ -51,13 +51,18 @@ export function enrich(event: QueuedEvent): EventBody {
  * value stored is the value the integrator can predict, rather than one
  * silently shortened somewhere they cannot see.
  */
-function truncate(value: string): string {
-  return value.length > ENRICHMENT_LIMITS.maxStringLength
-    ? value.slice(0, ENRICHMENT_LIMITS.maxStringLength)
-    : value;
+export function truncate(value: string): string {
+  if (value.length <= ENRICHMENT_LIMITS.maxStringLength) return value;
+  // By code point: a slice through a surrogate pair leaves a lone surrogate
+  // the backend may refuse.
+  return Array.from(value).slice(0, ENRICHMENT_LIMITS.maxStringLength).join('');
 }
 
-function normaliseTags(tags: string[] | undefined): string[] | undefined {
-  if (!tags || tags.length === 0) return undefined;
-  return tags.slice(0, ENRICHMENT_LIMITS.maxTags).map((tag) => truncate(String(tag)));
+export function normaliseTags(tags: string[] | undefined): string[] | undefined {
+  if (!Array.isArray(tags)) return undefined;
+  const unique = [
+    ...new Set(tags.filter((tag) => typeof tag === 'string' && tag.length > 0).map(truncate)),
+  ];
+  if (unique.length === 0) return undefined;
+  return unique.slice(0, ENRICHMENT_LIMITS.maxTags);
 }

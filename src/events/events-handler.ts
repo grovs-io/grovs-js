@@ -4,29 +4,83 @@ import type { SessionManager } from '../core/session';
 import { randomUUID } from '../core/uuid';
 import type { Logger } from '../logging/logger';
 import type { ApiService, BatchResult } from '../net/api';
+import type { TransportResponse } from '../net/transport';
 import { GrovsError } from '../net/errors';
 import type { PersistedQueue } from '../storage/persisted-queue';
-import { enrich } from './enrich';
+import { enrich, normaliseTags } from './enrich';
 import { isSystemEvent, type QueuedEvent } from './event';
-import { byteLength } from './sanitize';
+import { ENRICHMENT_LIMITS } from '../contract/event-contract';
+import { byteLength } from '../core/bytes';
 
 /**
  * Cadence is iOS's, not an implementer's choice. These two numbers determine
  * everything observable about the SDK's network behaviour, which makes them
  * parity constants rather than tuning details.
  */
-const BATCH_INTERVAL_MS = 30_000; // CustomEventsHandler.swift:45
+/**
+ * Web cadence, deliberately not iOS's 30 s (CustomEventsHandler.swift:45).
+ *
+ * A mobile session is minutes; a web visit is often seconds, and a batch that
+ * has not left within the visit depends on the exit flush surviving a
+ * termination the browser does not have to warn us about. Five seconds is
+ * where the comparable web SDKs sit — Mixpanel batches on exactly this, and
+ * Amplitude on one second. The cost is more requests on a page that produces
+ * events steadily; the cap of 50 per batch bounds it, and an idle page still
+ * sends nothing because a tick with an empty queue returns without a request.
+ */
+const BATCH_INTERVAL_MS = 5_000;
+/** The launch events leave when attribution settles — see onPathResolved.
+ *  This is only the backstop for a payload lookup that never answers. */
 const FIRST_BATCH_LEEWAY_MS = 5_000; // EventsHandler.swift:18
 
-/** Matches the backend's MAX_BATCH_SIZE in events_controller.rb. */
+/** Matches the batch cap the backend enforces on its events endpoint. */
 const MAX_BATCH_SIZE = 50;
+
+/**
+ * Ids this page load queued before its attribution was known.
+ *
+ * Page-scoped, not per handler: a consent grant replaces the client, and the
+ * events the pending one queued are still this page's to attribute. And not
+ * wider than the page either — a sibling tab shares the storage and the
+ * session, so it could adopt an unsettled event of ours from the queue and
+ * stamp its own campaign on it. Both tabs then send the same event_id with
+ * different bodies, and the backend's hash covers the resolved link, so they
+ * land as two events under two campaigns. An event is only ever attributed
+ * by the page that created it.
+ */
+const queuedBeforeAttribution = new Set<string>();
+
+/** The queue's own cap. An id whose event the queue has already evicted can
+ *  never be stamped, so holding it is pure growth — and consent can stay
+ *  pending for a whole visit. Insertion-ordered, so this drops oldest first. */
+const MAX_PENDING_ATTRIBUTION = 1000;
+
+function rememberForAttribution(id: string): void {
+  queuedBeforeAttribution.add(id);
+  for (const oldest of queuedBeforeAttribution) {
+    if (queuedBeforeAttribution.size <= MAX_PENDING_ATTRIBUTION) break;
+    queuedBeforeAttribution.delete(oldest);
+  }
+}
+
+/** Test seam: the set is module-private, and its bound needs asserting. */
+export function __pendingAttributionSize(): number {
+  return queuedBeforeAttribution.size;
+}
+
+/** Test seam: page-scoped, so it would otherwise leak between tests. */
+export function __resetPageAttribution(): void {
+  queuedBeforeAttribution.clear();
+}
 
 /**
  * Browsers cap all in-flight keepalive bodies at 64 KB combined and reject
  * rather than truncate past it. A 50-event batch of custom events carrying the
  * permitted 8 KB of properties is 400 KB, so the exit flush measures.
  */
-const KEEPALIVE_BUDGET_BYTES = 60 * 1024;
+// Well under it: the quota is per process and shared with the host page's
+// own sendBeacon calls, which fail outright while ours fills it.
+const KEEPALIVE_BUDGET_BYTES = 32 * 1024;
 
 /** `{"events":[]}` — the wrapper counts against the same cap the bodies do. */
 const KEEPALIVE_ENVELOPE_BYTES = 13;
@@ -64,7 +118,68 @@ export class EventsHandler {
   /** Set once the payload lookup resolves, so events are not sent before their
    *  attribution path is known. Mirrors hasFetchedPayloadLink on iOS. */
   private pathResolved = false;
+  /**
+   * After a failed drain, size-triggered flushes wait for the next interval
+   * tick. Without this a full queue against a failing backend sends one
+   * request per tracked event — an outage amplified by every page running
+   * the SDK.
+   */
+  private retryAfter = 0;
+  /**
+   * A deadline the server named, kept apart from the backoff above.
+   *
+   * They clear differently: our backoff means "that batch failed, wait a
+   * tick", so any success retires it. A Retry-After means "this backend is
+   * shedding load", which another request completing says nothing about — and
+   * an ordinary batch and a keepalive batch are in flight at the same time
+   * every time a page is hidden mid-drain, so the two answers arrive in
+   * either order.
+   */
+  private serverCooldownUntil = 0;
+  /**
+   * Ids in a keepalive request not yet answered. A keepalive request
+   * survives the unload that follows a hide, so the pagehide flush and the
+   * normal drain must not send those events again — that was the double
+   * count the exit path used to accept.
+   */
+  private readonly inFlightKeepalive = new Set<string>();
+  /** Owned here, not by the custom handler: the README promises global tags
+   *  on every event, and time_spent is an event. */
+  private globalTags: string[] | null = null;
+  /** Ids in the ordinary drain's request. The hide flush skips them: that
+   *  request either completes or is cancelled by the unload, and either way
+   *  the events are not lost — a cancelled one re-sends on the next load. */
+  private readonly inFlightDrain = new Set<string>();
+  /** Settles when every keepalive request so far has been answered, so
+   *  `await flush()` means delivered. */
+  private keepaliveSettled: Promise<void> = Promise.resolve();
   constructor(private readonly deps: EventsHandlerDeps) {}
+
+  setGlobalTags(tags: string[] | null): void {
+    const normalised = normaliseTags(tags ?? undefined);
+    this.globalTags = normalised ?? null;
+  }
+
+  /**
+   * Per-event tags take priority: when the combined count exceeds the cap,
+   * they are kept first and global tags fill what remains. The alternative —
+   * global tags crowding out the ones describing this specific event — loses
+   * the more informative half.
+   */
+  mergeTags(tags?: string[]): string[] | undefined {
+    // Bounded before queueing, not only at send: a stored event otherwise
+    // carries whatever the caller passed, against the queue's byte budget.
+    const perEvent = normaliseTags(tags) ?? [];
+    const global = this.globalTags ?? [];
+    if (perEvent.length === 0 && global.length === 0) return undefined;
+
+    const merged = [...perEvent];
+    for (const tag of global) {
+      if (merged.length >= ENRICHMENT_LIMITS.maxTags) break;
+      if (!merged.includes(tag)) merged.push(tag);
+    }
+    return merged.slice(0, ENRICHMENT_LIMITS.maxTags);
+  }
 
   /**
    * Emits the events iOS emits at launch, following the same rules:
@@ -82,11 +197,17 @@ export class EventsHandler {
     }
 
     this.log('app_open');
+    this.startTimers();
+  }
 
+  /** The flush schedule without the launch events, for a replacement client
+   *  taking over a visit that has already emitted them. */
+  startTimers(): void {
+    if (this.timer !== null) return;
     // The leeway lets install and app_open leave in one request rather than
     // two, which is why iOS waits before the first flush.
-    this.leewayTimer = setTimeout(() => void this.flush(), FIRST_BATCH_LEEWAY_MS);
-    this.timer = setInterval(() => void this.flush(), BATCH_INTERVAL_MS);
+    this.leewayTimer = setTimeout(() => this.tick(), FIRST_BATCH_LEEWAY_MS);
+    this.timer = setInterval(() => this.tick(), BATCH_INTERVAL_MS);
   }
 
   log(event: SystemEventName, engagementTime?: number): void {
@@ -101,42 +222,86 @@ export class EventsHandler {
     const path = this.deps.currentPath();
     if (path) queued.path = path;
     if (typeof engagementTime === 'number') queued.engagementTime = engagementTime;
+    const tags = this.mergeTags();
+    if (tags) queued.tags = tags;
+    // Attribution is already settled, so this event is born immutable — see
+    // onPathResolved. Without it a replay could gain a later campaign's path.
+    if (this.pathResolved) queued.pathFinal = true;
+    else rememberForAttribution(queued.id);
 
     this.deps.queue.add(queued);
-
-    if (this.deps.queue.size() >= MAX_BATCH_SIZE) void this.flush();
+    // time_spent is logged from the hide and exit handlers; a size flush
+    // there would start an ordinary request the unload cancels, and the
+    // keepalive that follows would skip the events it holds.
+    if (event !== 'time_spent') this.flushIfFull();
   }
 
   /** Enqueues an already-built event, used by the custom events handler. */
   enqueue(event: QueuedEvent): void {
     if (!this.deps.isEnabled()) return;
+    if (this.pathResolved) event.pathFinal = true;
+    else rememberForAttribution(event.id);
     this.deps.queue.add(event);
-    if (this.deps.queue.size() >= MAX_BATCH_SIZE) void this.flush();
+    this.flushIfFull();
+  }
+
+  private flushIfFull(): void {
+    // What is *sendable*, not what is queued. A keepalive request holds up to
+    // 50 events until it is answered, and counting those kept the queue over
+    // the threshold, so every further track() started a request of its own —
+    // the amplification the cooldown exists to prevent, on the one path it
+    // did not cover.
+    const inFlight = this.inFlightKeepalive.size + this.inFlightDrain.size;
+    if (this.deps.queue.size() - inFlight < MAX_BATCH_SIZE) return;
+    if (this.deps.clock.now() < this.cooldownUntil()) return;
+    // The automatic path: a queue reaching the batch size is the SDK's own
+    // schedule, not the integrator asking, so it yields to a cooldown.
+    void this.startDrain(true);
   }
 
   /**
-   * Called once the deep link payload resolves. Back-fills the path onto this
-   * session's events queued before it was known, then unblocks sending.
+   * Called once the deep link payload resolves. Back-fills the path onto the
+   * events queued before it was known, and marks every queued event's
+   * attribution settled, which is also what unblocks sending.
    *
-   * Scoped to the session because the queue survives reloads for seven days:
-   * back-filling everything stamps today's campaign onto a direct visit from
-   * yesterday. The session is the SDK's own unit of a visit, and it outlives a
-   * client the way the queue does — a second configure() before consent lands
-   * must not move the boundary.
+   * An event is immutable from the moment it could have been transmitted.
+   * The queue survives reloads, so an event already marked settled was
+   * sendable on an earlier page load and may be in the backend already — and
+   * the backend's event_id is a content hash folding in the resolved link, so
+   * adding a path to a replay would make it a *different* event there and
+   * count it twice under the new campaign. At-least-once delivery works only
+   * because a re-send is byte-identical. "No campaign" is a settled answer
+   * too, which is why the flag exists rather than reading an absent path.
+   *
+   * Stamping is still scoped to this session: the queue holds seven days, and
+   * an unsettled event from yesterday's visit is not this campaign's.
    */
   onPathResolved(path: string | null): void {
-    if (path) {
-      const session = this.deps.session.currentSessionId();
-      this.deps.queue.transform((event) =>
-        event.path || event.sessionId !== session ? event : { ...event, path },
-      );
-    }
+    const session = this.deps.session.currentSessionId();
+    this.deps.queue.transform((event) => {
+      if (event.pathFinal) return event;
+      // Ours to attribute only if this page queued it. A sibling tab's
+      // unsettled event stays unsettled here; its own page will settle it.
+      if (!queuedBeforeAttribution.has(event.id)) return event;
+      const stamp = path && !event.path && event.sessionId === session;
+      return stamp ? { ...event, path, pathFinal: true } : { ...event, pathFinal: true };
+    });
+    queuedBeforeAttribution.clear();
     this.pathResolved = true;
+
+    // The first visit's events go now, not on the next tick. install,
+    // app_open and the opening screen view are all queued by this point, and
+    // every flush before this one returned without sending because
+    // attribution was not settled — so without this the opening batch waited
+    // out a whole interval, and a visit shorter than that depended on the
+    // exit flush surviving the tab closing.
+    if (this.deps.queue.size() > 0) this.tick();
   }
 
   /** Withdraws the permission to send that configure() granted. */
   resetDelivery(): void {
     this.pathResolved = false;
+    queuedBeforeAttribution.clear();
   }
 
   private active(): boolean {
@@ -151,39 +316,87 @@ export class EventsHandler {
    *  the same drain — `await Grovs.flush()` is documented as waiting for
    *  delivery, including when the interval tick got there first. */
   flush(): Promise<void> {
-    if (this.draining) return this.draining;
-    if (!this.pathResolved || !this.active()) return Promise.resolve();
+    // The integrator asking directly: a drain started here goes through a
+    // cooldown, which is the documented meaning of "drain the queue now".
+    //
+    // One exception, documented in the README rather than fixed: a drain
+    // already running is joined rather than doubled, and if that one is a
+    // scheduled drain that then yields to a throttled backend, this call
+    // resolves with events still queued. Continuing here instead re-sends a
+    // batch that has merely *failed*, doubling requests against a backend
+    // already in trouble — a worse trade than a flush that returns early.
+    return this.startDrain(false);
+  }
 
-    const drain = this.drain().finally(() => {
+  private startDrain(automatic: boolean): Promise<void> {
+    // Every keepalive outstanding when this call was made, not only the ones
+    // a drain already in progress knew about.
+    const settled = this.keepaliveSettled;
+    // A drain already running is awaited rather than doubled. If that one was
+    // automatic and stops on a cooldown, this caller gets a partly drained
+    // queue — the same as when a batch fails, and the next tick continues it.
+    if (this.draining) return this.draining.then(() => settled);
+    if (!this.pathResolved || !this.active()) return settled;
+
+    const drain = this.drain(automatic).finally(() => {
       this.draining = null;
     });
     this.draining = drain;
-    return drain;
+    return drain.then(() => this.keepaliveSettled);
   }
 
-  private async drain(): Promise<void> {
-    const pending = this.deps.queue.pruneStale();
+  private async drain(automatic: boolean): Promise<void> {
+    const pending = this.notInFlight(this.deps.queue.pruneStale());
     if (pending.length === 0) return;
 
     // Drain rather than send one batch: a queue of 300 would otherwise take
     // five minutes to clear at one batch per 30-second tick.
     let remaining = pending;
     while (remaining.length > 0) {
+      // Checked before every batch, this one included. A concurrent keepalive
+      // request can be answered with a 429 while this loop is awaiting, and
+      // the batches behind it owe the server the same delay. Only a scheduled
+      // drain yields — an explicit flush() is the integrator asking, and the
+      // documented meaning of that is to drain the queue now.
+      if (automatic && this.deps.clock.now() < this.cooldownUntil()) break;
       const sent = await this.sendChunks(remaining.slice(0, MAX_BATCH_SIZE), false);
-      if (!sent) break;
+      if (!sent) {
+        // Never shorten a delay the server named: settleBatch may already
+        // have set a longer one from Retry-After, and this is the floor.
+        this.retryAfter = Math.max(
+          this.retryAfter,
+          this.deps.clock.now() + BATCH_INTERVAL_MS,
+        );
+        break;
+      }
       // Re-check after the await: a client retired or disabled mid-drain
       // would otherwise keep transmitting the batches behind the one in
       // flight, and report their failures against a config that is gone.
-      if (!this.active()) break;
-      remaining = this.deps.queue.all();
+      // pathResolved too, because a reset withdraws it — otherwise this loop
+      // walks straight on into the *new* visitor's queue and sends their
+      // events before their attribution has resolved.
+      if (!this.active() || !this.pathResolved) break;
+      remaining = this.notInFlight(this.deps.queue.all());
     }
   }
 
+  private notInFlight(events: QueuedEvent[]): QueuedEvent[] {
+    return events.filter((event) => !this.inFlightKeepalive.has(event.id));
+  }
+
   /**
-   * The exit flush. System events go first and the batch fills to a byte
-   * ceiling, so the failure mode is "some custom events arrive later" rather
-   * than "the final time_spent vanishes" — and time_spent is not retryable,
-   * because the session it measures is over.
+   * The keepalive flush, sent when the page is hidden.
+   *
+   * System events go first and the batch fills to a byte ceiling, so the
+   * failure mode is "some custom events arrive later" rather than "the final
+   * time_spent vanishes" — and time_spent is not retryable, because the
+   * session it measures is over.
+   *
+   * Sent from the hidden transition. On an unload pagehide fires first and
+   * the hide follows in every engine, and Firefox discards requests issued
+   * from pagehide — so the hide is both the universal and the safe moment.
+   * keepalive lets the request outlive the unload; if the tab merely went to
+   * the background, it is answered normally and the events are removed.
    */
   flushOnExit(): void {
     if (!this.deps.isEnabled()) return;
@@ -195,18 +408,14 @@ export class EventsHandler {
       return;
     }
 
-    // Deliberately not filtered by what the drain already has in flight. A tab
-    // close fires visibilitychange first, so the ordinary request carrying
-    // time_spent is usually cancelled by the navigation that follows, and
-    // skipping those events here loses the one event that cannot be re-sent —
-    // the session it measures is over.
-    //
-    // So the exit path is at-least-once *by design*: this batch, and the one
-    // below whose acknowledgement cannot arrive after unload, can both be
-    // delivered twice. event_id makes them dedupable and spec B11 plans the
-    // dedup, but it is not shipped — read this as a chosen double count, not
-    // as a guarantee that something else removes it.
-    const pending = this.deps.queue.all();
+    // Filtered by both kinds of request in flight. A keepalive one is not
+    // cancelled by the unload, so a second hide has nothing left to send; an
+    // ordinary one either completes or is cancelled, and a cancelled batch
+    // stays queued for the next page load. Sending either again is the
+    // double count this path used to accept.
+    const pending = this.notInFlight(this.deps.queue.all()).filter(
+      (event) => !this.inFlightDrain.has(event.id),
+    );
     if (pending.length === 0) {
       this.deps.queue.flushToStorage();
       return;
@@ -238,20 +447,37 @@ export class EventsHandler {
     }
 
     if (bodies.length > 0) {
-      // Remove only once the request resolves. Deleting up front loses the
-      // batch outright whenever keepalive is refused — over budget, offline,
-      // or a network error — and time_spent is not retryable from a later
-      // page load if it was already dropped here.
+      // Attribution may still be resolving: authentication is enough to
+      // transmit, and a visitor can leave before the payload lookup answers.
+      // Whatever leaves now is settled first and written before the request,
+      // or the next page load would back-fill a later campaign onto it and
+      // change the body under an id the backend has already seen.
+      const settling = new Set(batch.map((event) => event.id));
+      if (batch.some((event) => !event.pathFinal)) {
+        this.deps.queue.transform((event) =>
+          event.pathFinal || !settling.has(event.id) ? event : { ...event, pathFinal: true },
+        );
+        this.deps.queue.flushToStorage();
+      }
+
+      // Removed only once acknowledged, and persisted meanwhile. When the
+      // page is gone before the answer, the next page load sends the batch
+      // again; the backend's events table is a ReplacingMergeTree keyed on a
+      // content-hash event_id, so the copy collapses. Losing the batch — the
+      // alternative, and for a short visit the install itself — does not.
       const ids = batch.map((event) => event.id);
-      void this.deps.api
+      for (const id of ids) this.inFlightKeepalive.add(id);
+      const request = this.deps.api
         .addEvents(bodies, true)
         .then((response) => {
-          if (response.ok) this.deps.queue.remove(ids);
-          this.deps.queue.flushToStorage();
+          this.settleBatch(response, batch);
         })
-        .catch(() => {
+        .catch(() => {})
+        .then(() => {
+          for (const id of ids) this.inFlightKeepalive.delete(id);
           this.deps.queue.flushToStorage();
         });
+      this.keepaliveSettled = this.keepaliveSettled.then(() => request);
 
       if (batch.length < ordered.length) {
         this.deps.logger.info(
@@ -268,7 +494,31 @@ export class EventsHandler {
   /** Restarts the flush interval after a setEnabled(false) / (true) cycle. */
   resume(): void {
     if (this.timer !== null) return;
-    this.timer = setInterval(() => void this.flush(), BATCH_INTERVAL_MS);
+    this.timer = setInterval(() => this.tick(), BATCH_INTERVAL_MS);
+  }
+
+  /**
+   * The scheduled drain. Unlike an explicit Grovs.flush(), which is the
+   * integrator deliberately asking, this one honours a backoff the server
+   * asked for — otherwise a 429 naming two minutes still got a request from
+   * every tab every thirty seconds, which is the outage amplification the
+   * header exists to prevent.
+   */
+  /** A reconnect drain. Subject to a cooldown, unlike an explicit flush()
+   *  where the integrator is asking directly. */
+  flushIfDue(): void {
+    this.tick();
+  }
+
+  /** The later of our own backoff and any deadline the server named. */
+  private cooldownUntil(): number {
+    return Math.max(this.retryAfter, this.serverCooldownUntil);
+  }
+
+  private tick(): void {
+    if (this.deps.clock.now() < this.cooldownUntil()) return;
+    if (this.deps.queue.size() === 0) return;
+    void this.startDrain(true);
   }
 
   stop(): void {
@@ -288,8 +538,33 @@ export class EventsHandler {
       this.deps.logger.warn(`Discarded ${malformed.length} malformed queued event(s).`);
     }
     if (bodies.length === 0) return true;
-    const response = await this.deps.api.addEvents(bodies, keepalive);
+    for (const event of sendable) this.inFlightDrain.add(event.id);
+    let response;
+    try {
+      response = await this.deps.api.addEvents(bodies, keepalive);
+    } finally {
+      for (const event of sendable) this.inFlightDrain.delete(event.id);
+    }
+    return this.settleBatch(response, sendable);
+  }
 
+  /**
+   * One response handler for both delivery paths: a transport failure keeps
+   * the batch queued, a success removes it, and per-event rejections are
+   * reported — the keepalive path used to drop those silently.
+   */
+  private settleBatch(response: TransportResponse, sendable: QueuedEvent[]): boolean {
+    if (response.ok) {
+      // Cleared on success, or one failure would hold size-triggered flushes
+      // back for a whole interval after the backend recovered.
+      this.retryAfter = 0;
+    } else if (response.retryAfterMs) {
+      // The server named a delay; hold off at least that long.
+      this.serverCooldownUntil = Math.max(
+        this.serverCooldownUntil,
+        this.deps.clock.now() + response.retryAfterMs,
+      );
+    }
     if (!response.ok) {
       // A retired client's failure is not the active one's failure.
       if (!this.active()) return false;

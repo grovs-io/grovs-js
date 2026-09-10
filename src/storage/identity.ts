@@ -1,4 +1,4 @@
-import { getDocument, probeCookies, probeLocalStorage } from '../core/environment';
+import { getDocument, probeCookies } from '../core/environment';
 import type { Logger } from '../logging/logger';
 import { CookieStorage } from './cookie-storage';
 import { LocalStorageAdapter } from './local-storage';
@@ -26,10 +26,16 @@ export class IdentityStore {
   private readonly cookie: Storage | null;
   private readonly mirror: Storage | null;
 
+  private readonly logger: Logger | undefined;
+
   constructor(cookieDomain?: string, logger?: Logger) {
+    this.logger = logger;
     const doc = getDocument();
     this.cookie = doc && probeCookies() ? new CookieStorage(doc, cookieDomain, logger) : null;
-    this.mirror = probeLocalStorage() ? new LocalStorageAdapter() : null;
+    // No write probe: a full store still reads and removes, and every call
+    // on the adapter is guarded. Gating on a probe left the mirror unread and
+    // uncleared exactly when storage was under pressure.
+    this.mirror = new LocalStorageAdapter();
   }
 
   get(): string | null {
@@ -46,7 +52,20 @@ export class IdentityStore {
   }
 
   set(value: string): void {
-    this.cookie?.set(LINKSQUARED_STORAGE_KEY, value);
+    // CookieStorage verifies by reading back, so a false here is a write the
+    // browser took but a *different* cookie shadows — a host-only one left by
+    // v1 sitting in front of the domain-scoped one. Reads would keep
+    // returning the stale identity for ever. remove() clears both scopes, so
+    // clearing and rewriting is what repairs it.
+    if (this.cookie && !this.cookie.set(LINKSQUARED_STORAGE_KEY, value)) {
+      this.cookie.remove(LINKSQUARED_STORAGE_KEY);
+      if (!this.cookie.set(LINKSQUARED_STORAGE_KEY, value)) {
+        this.logger?.warn(
+          'The visitor identifier cookie could not be written; the localStorage ' +
+            'mirror carries identity for this visit.',
+        );
+      }
+    }
     this.mirror?.set(LINKSQUARED_STORAGE_KEY, value);
   }
 

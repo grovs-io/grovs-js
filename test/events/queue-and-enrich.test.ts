@@ -256,3 +256,50 @@ describe('PersistedQueue', () => {
     expect(storage.get(QUEUE_STORAGE_KEY)).toBe('[]');
   });
 });
+
+describe('PersistedQueue byte budget', () => {
+  function bigEvent(id: number, at: number): QueuedEvent {
+    return {
+      id: `e${id}`,
+      eventName: 'big',
+      createdAt: at,
+      sessionId: 's',
+      properties: { blob: 'x'.repeat(7900) },
+    };
+  }
+
+  it('evicts oldest-first once the serialized queue exceeds the budget, and says so', () => {
+    const storage = new FakeStorage();
+    const clock = new FakeClock();
+    const dropped = vi.fn();
+    const queue = new PersistedQueue(storage, clock, dropped);
+    for (let i = 0; i < 200; i += 1) queue.add(bigEvent(i, clock.now() + i));
+    queue.flushToStorage();
+
+    expect(queue.size()).toBeLessThan(200);
+    expect(queue.all()[queue.size() - 1]?.id).toBe('e199');
+    expect(dropped).toHaveBeenCalledWith(200 - queue.size(), expect.stringContaining('characters'));
+
+    const stored = storage.get(QUEUE_STORAGE_KEY) ?? '';
+    expect(stored.length).toBeLessThanOrEqual(1_000_000);
+    // What is stored is exactly what is in memory: no reload surprise.
+    expect(JSON.parse(stored)).toEqual(queue.all());
+  });
+
+  it('keeps the stored union under the budget too', () => {
+    const storage = new FakeStorage();
+    const clock = new FakeClock();
+    // Two tabs over one key: the second opened before the first wrote.
+    const mine = new PersistedQueue(storage, clock);
+    const other = new PersistedQueue(storage, clock);
+    for (let i = 0; i < 100; i += 1) other.add(bigEvent(1000 + i, clock.now() + i));
+    other.flushToStorage();
+
+    for (let i = 0; i < 100; i += 1) mine.add(bigEvent(i, clock.now() + 500 + i));
+    mine.flushToStorage();
+
+    const stored = JSON.parse(storage.get(QUEUE_STORAGE_KEY) ?? '[]') as QueuedEvent[];
+    expect(JSON.stringify(stored).length).toBeLessThanOrEqual(1_000_000);
+    expect(stored[stored.length - 1]?.id).toBe('e99');
+  });
+});

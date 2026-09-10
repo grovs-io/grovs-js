@@ -25,7 +25,7 @@ export function __resetDeprecationWarnings(): void {
 }
 
 /**
- * Two Grovs clients on one page is unsupported (docs/CONTEXT.md): each runs
+ * Two Grovs clients on one page is unsupported: each runs
  * its own authentication, launch events, timers and session, so everything is
  * counted twice. The v1 constructor and the v2 statics now share one export,
  * which makes mixing the eras easy to do by accident — so the first time both
@@ -88,6 +88,8 @@ export class GrovsV1 {
     );
     this.links = new LinkGenerator(this.client);
     this.messages = new MessagesService(this.client);
+    // So a reset — this tab's or another's — closes the list this shim owns.
+    this.client.messagesUI = () => this.messagesUI();
     v1Constructed = true;
     warnCoexistence();
   }

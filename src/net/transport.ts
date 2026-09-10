@@ -20,6 +20,9 @@ export interface TransportResponse {
   /** 0 means the request never reached a server — DNS, offline, CORS. */
   status: number;
   body: unknown;
+  /** From a Retry-After header, when the server sent one. Callers that queue
+   *  hold off at least this long before trying again. */
+  retryAfterMs?: number;
 }
 
 /**

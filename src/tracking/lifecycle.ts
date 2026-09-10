@@ -5,9 +5,10 @@ export interface LifecycleDeps {
   clock: Clock;
   /** Emits a time_spent event carrying the seconds since the page became visible. */
   onEngagement: (seconds: number) => void;
-  /** The byte-bounded keepalive flush. Terminal — pagehide only. */
+  /** pagehide: the first of the two unload events. Persist only; the
+   *  request leaves from onHide, which every engine fires right after. */
   onExit: () => void;
-  /** A normal flush, for a tab switch the user may well come back from. */
+  /** The hidden transition: a tab switch, or the unload pagehide announced. */
   onHide: () => void;
   /** Returning to the tab. Refreshes the shared session stamp. */
   onForeground?: () => void;
@@ -20,9 +21,13 @@ export interface LifecycleDeps {
  * fires on tab close — so the final time_spent for every session was lost,
  * and that is the majority of the engagement signal.
  *
- * `pagehide` is the reliable terminal event: `beforeunload` and `unload` are
- * unreliable on mobile Safari and suppress the back/forward cache.
- * `visibilitychange` catches tab switches, which `pagehide` does not.
+ * `beforeunload` and `unload` are unreliable on mobile Safari and suppress
+ * the back/forward cache, so only `pagehide` and `visibilitychange` are used.
+ * On an unload `pagehide`, when it fires, comes first and `visibilitychange`
+ * to hidden follows in every engine; a tab switch fires only the latter, and
+ * a background tab killed by mobile Safari fires only the latter as well. The hide is therefore the
+ * one moment every exit passes through, and the keepalive request is sent
+ * from there. Firefox discards network requests issued from `pagehide`.
  */
 export class LifecycleTracker {
   private visibleSince: number | null = null;
@@ -40,9 +45,6 @@ export class LifecycleTracker {
     const onVisibilityChange = (): void => {
       if (doc.visibilityState === 'hidden') {
         this.emitEngagement();
-        // A tab switch is not an exit. Using the keepalive path here would
-        // fire dozens of times a session, each one a request whose result is
-        // never checked; a normal flush retries on failure.
         this.deps.onHide();
       } else {
         this.visibleSince = this.deps.clock.now();

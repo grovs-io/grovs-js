@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { scopedKey } from '../../src/storage/scoped-storage';
 import { resolveBulkStorage, SwitchableStorage } from '../../src/storage/bulk-storage';
 import { CookieStorage } from '../../src/storage/cookie-storage';
 import { LocalStorageAdapter } from '../../src/storage/local-storage';
@@ -124,7 +125,7 @@ describe('client storage wiring', () => {
     await new Promise((r) => setTimeout(r, 1100));
 
     expect(document.cookie).not.toContain('grovs_events');
-    expect(localStorage.getItem('grovs_events')).toContain('y');
+    expect(localStorage.getItem(scopedKey('grovs_events', 'k'))).toContain('y');
     client.shutdown();
   });
 
@@ -157,8 +158,8 @@ describe('client storage wiring', () => {
 
     // Both holders were constructed against the pre-consent memory store.
     // If they kept it, neither of these survives a reload.
-    expect(localStorage.getItem('grovs_session_id')).toBe(sessionId);
-    expect(localStorage.getItem('grovs_events')).toContain('after-consent');
+    expect(localStorage.getItem(scopedKey('grovs_session_id', 'k'))).toBe(sessionId);
+    expect(localStorage.getItem(scopedKey('grovs_events', 'k'))).toContain('after-consent');
     client.shutdown();
   });
 
@@ -192,7 +193,7 @@ describe('client storage wiring', () => {
     client.reset();
     client.sessionManager.currentSessionId();
 
-    expect(localStorage.getItem('grovs_session_id')).toBeNull();
+    expect(localStorage.getItem(scopedKey('grovs_session_id', 'k'))).toBeNull();
     expect(localStorage.getItem('linksquared')).toBeNull();
     expect(document.cookie).not.toContain('linksquared');
   });

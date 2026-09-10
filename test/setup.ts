@@ -1,10 +1,16 @@
 import { beforeEach } from 'vitest';
 import { __resetScreenDedup } from '../src/events/custom-events-handler';
 import { __resetPatchOwner } from '../src/tracking/auto-screen-tracker';
+import { __resetPendingConsentStore } from '../src/core/client';
+import { __resetPageAttribution } from '../src/events/events-handler';
 
-// Module-level, so they would otherwise leak between tests.
+// Module-level, so they would otherwise leak between tests. The launch-event
+// guard lives there too: a test inheriting it from the previous one would see
+// no app_open and pass or fail for the wrong reason.
 beforeEach(__resetScreenDedup);
 beforeEach(__resetPatchOwner);
+beforeEach(__resetPendingConsentStore);
+beforeEach(__resetPageAttribution);
 
 /**
  * jsdom implements no canvas backend, so HTMLCanvasElement.getContext throws

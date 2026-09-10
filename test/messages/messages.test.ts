@@ -319,7 +319,13 @@ describe('MessagesUI', () => {
     expect(root.querySelector('.grovs-detail-card')).not.toBeNull();
     expect(root.querySelector('.grovs-heading')!.textContent).toBe('Hello');
     const frame = root.querySelector('iframe')!;
-    expect(frame.getAttribute('sandbox')).toBe('allow-scripts allow-popups allow-forms');
+    // No allow-same-origin: the frame cannot reach the embedding document.
+    // allow-popups-to-escape-sandbox so a link out of a message opens a
+    // working page rather than one with an opaque origin.
+    expect(frame.getAttribute('sandbox')).toBe(
+      'allow-scripts allow-popups allow-forms allow-popups-to-escape-sandbox',
+    );
+    expect(frame.getAttribute('sandbox')).not.toContain('allow-same-origin');
     expect(frame.getAttribute('referrerpolicy')).toBe('no-referrer');
     expect(frame.src).toBe('https://msg.example/x');
   });
@@ -574,6 +580,10 @@ class StubMessagesService {
 
   /** null is a failed request, as MessagesService.fetchMessages returns it. */
   failPages = new Set<number>();
+  canShowUI = true;
+  uiGuard(): () => boolean {
+    return () => this.canShowUI;
+  }
 
   async fetchMessages(page: number): Promise<GrovsMessage[] | null> {
     this.calls.push(page);

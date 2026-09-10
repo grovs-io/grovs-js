@@ -122,7 +122,7 @@ describe('IdentityStore', () => {
 
     it('does not throw and stays inert with no document (SSR)', () => {
       vi.spyOn(environment, 'getDocument').mockReturnValue(null);
-      vi.spyOn(environment, 'probeLocalStorage').mockReturnValue(false);
+      vi.spyOn(environment, 'getLocalStorage').mockReturnValue(null);
 
       const store = new IdentityStore();
       expect(() => store.set('visitor-1')).not.toThrow();
@@ -141,7 +141,10 @@ describe('IdentityStore', () => {
     });
 
     it('keeps the cookie tier when localStorage is unavailable', () => {
-      vi.spyOn(environment, 'probeLocalStorage').mockReturnValue(false);
+      // Blocked, not merely absent: the adapter must swallow the throw.
+      vi.spyOn(environment, 'getLocalStorage').mockImplementation(() => {
+        throw new Error('blocked');
+      });
 
       const store = new IdentityStore();
       store.set('visitor-1');

@@ -217,6 +217,7 @@ describe('PaymentEventsHandler', () => {
     // Wire names must match iOS's TransactionData.toData() and the backend's
     // permit list (event_type / price_cents / date), or Rails drops them.
     expect(transport.last?.body).toEqual({
+      transaction_id: expect.any(String),
       event_type: 'buy',
       price_cents: 1999,
       currency: 'USD',

@@ -22,11 +22,55 @@ const PATCH_MARKER = Symbol.for('grovs.historyPatch');
 interface PatchOwnership {
   notify: () => void;
 }
-let patchOwner: PatchOwnership | null = null;
 
-/** Test seam: module-level, so it would otherwise leak between tests. */
+/**
+ * Ownership lives in the same cross-realm registry as the marker, not in this
+ * module.
+ *
+ * A page can hold two copies of this SDK — a CDN script tag beside an npm
+ * install is a configuration customers reach by accident. `Symbol.for` is
+ * shared between the copies, so the second one saw the marker and correctly
+ * refused to install a second patch. But a module-level owner is not shared,
+ * so the installed patch went on reporting to the first copy's tracker and
+ * the second never saw a navigation. Once the first stopped, the patch was
+ * inert and the marker still said "installed": SPA tracking blind, silently
+ * and permanently, for the life of the page.
+ *
+ * Held in a box rather than assigned onto the patched function, because
+ * another library may have wrapped History after us — the patched function is
+ * then unreachable, while this box is not.
+ */
+const OWNER_KEY = Symbol.for('grovs.historyPatchOwner');
+
+/**
+ * The patch actually installed, and the functions it displaced.
+ *
+ * Shared, because uninstalling is only safe against the exact pair that is
+ * installed. A copy of the SDK restoring *its own* captured originals over a
+ * patch another copy installed writes the page back to a state that never
+ * existed — and takes out any wrappers other libraries chained on since.
+ */
+interface PatchRecord {
+  push: History['pushState'];
+  replace: History['replaceState'];
+  originalPush: History['pushState'];
+  originalReplace: History['replaceState'];
+}
+
+interface OwnerBox {
+  current: PatchOwnership | null;
+  patch: PatchRecord | null;
+}
+
+function ownerBox(): OwnerBox {
+  const registry = globalThis as unknown as Record<symbol, OwnerBox | undefined>;
+  return (registry[OWNER_KEY] ??= { current: null, patch: null });
+}
+
+/** Test seam: shared state, so it would otherwise leak between tests. */
 export function __resetPatchOwner(): void {
-  patchOwner = null;
+  ownerBox().current = null;
+  ownerBox().patch = null;
 }
 
 interface PatchedFn {
@@ -77,35 +121,52 @@ export class AutoScreenTracker {
     if (!win) return;
 
     this.enabled = true;
-    // stop() detaches the listeners and releases ownership even when the patch
-    // has to stay installed, so re-entry owes the caller all three: the
-    // listeners, the ownership the patch reports through, and the current
-    // screen. `??=` so a live owner is never displaced.
-    if (this.installed) {
-      patchOwner ??= this.ownership;
+
+    const history = win.history;
+    const push = history.pushState as History['pushState'] & PatchedFn;
+
+    // The shared state, never this instance's memory of it. Another copy of
+    // the SDK can have restored the originals since we last looked, and a
+    // tracker trusting its own `installed` flag then took ownership of a
+    // patch that was no longer there and reported nothing for the rest of the
+    // page's life. Someone else's patch is fine to chain onto; ours is not.
+    if (push[PATCH_MARKER]) {
+      this.installed = true;
+      // The patch is ours — this client's own earlier install, or another
+      // copy of the SDK on the page. Whoever started last owns it. Leaving a
+      // live owner in place instead would strand this tracker permanently
+      // once that owner stopped: the marker still says installed, so it never
+      // re-patches, and the box it reports through is nobody's. Two clients
+      // tracking at once is the failure this avoids, and it does not happen —
+      // one owner notifies, and the displaced one goes quiet.
+      // stop() detaches the listeners and releases ownership even when the
+      // patch has to stay installed, so re-entry owes the caller all three:
+      // the listeners, the ownership the patch reports through, and the
+      // current screen.
+      ownerBox().current = this.ownership;
       this.attachListeners(win);
       this.trackCurrent();
       return;
     }
 
-    const history = win.history;
-    const push = history.pushState as History['pushState'] & PatchedFn;
-
-    // Guard: someone else's patch is fine to chain onto, but ours is not.
-    if (push[PATCH_MARKER]) {
+    // Not the outermost function. The shared record, not this instance's
+    // memory, says whether a Grovs patch exists at all:
+    //
+    //  - A record means another library wrapped ours after it was installed.
+    //    Ours is still in the chain and still reports; patching again would
+    //    double-count.
+    //  - No record means the patch has been removed — by another copy of the
+    //    SDK, or by this one earlier. Patch again, or this tracker reports
+    //    nothing for the rest of the page's life.
+    if (ownerBox().patch !== null) {
       this.installed = true;
-      if (patchOwner === null) {
-        // Orphaned by a client that could not uninstall it: adopt it, or the
-        // page keeps a patch that reports to nobody.
-        patchOwner = this.ownership;
-        this.attachListeners(win);
-      }
-      // Otherwise a live owner keeps it: two clients on one page is
-      // unsupported (docs/CONTEXT.md), and the second reports only this screen.
+      ownerBox().current = this.ownership;
+      this.attachListeners(win);
       this.trackCurrent();
       return;
     }
 
+    this.installed = false;
     this.originalPushState = history.pushState;
     this.originalReplaceState = history.replaceState;
 
@@ -116,23 +177,29 @@ export class AutoScreenTracker {
     // installed it whenever another library wrapped History after us.
     const patchedPush = ((...args: Parameters<History['pushState']>): void => {
       this.originalPushState?.apply(history, args);
-      patchOwner?.notify();
+      ownerBox().current?.notify();
     }) as History['pushState'] & PatchedFn;
     patchedPush[PATCH_MARKER] = true;
 
     const patchedReplace = ((...args: Parameters<History['replaceState']>): void => {
       this.originalReplaceState?.apply(history, args);
-      patchOwner?.notify();
+      ownerBox().current?.notify();
     }) as History['replaceState'] & PatchedFn;
     patchedReplace[PATCH_MARKER] = true;
 
     history.pushState = patchedPush;
     history.replaceState = patchedReplace;
+    ownerBox().patch = {
+      push: patchedPush,
+      replace: patchedReplace,
+      originalPush: this.originalPushState,
+      originalReplace: this.originalReplaceState,
+    };
 
     this.attachListeners(win);
 
     this.installed = true;
-    patchOwner = this.ownership;
+    ownerBox().current = this.ownership;
     this.trackCurrent();
   }
 
@@ -160,30 +227,46 @@ export class AutoScreenTracker {
    */
   stop(): void {
     this.enabled = false;
+    const owned = ownerBox().current === this.ownership;
     // Release it whether or not the patch can come out: a replacement client
     // adopts what this one leaves behind.
-    if (patchOwner === this.ownership) patchOwner = null;
+    if (owned) ownerBox().current = null;
 
     const win = getWindow();
     if (!win || !this.installed) return;
+
+    // Someone else owns the patch now — another copy of the SDK on the page,
+    // which took it over when it started. Taking the patch out from under a
+    // live owner would leave it tracking nothing. Detach and go quiet
+    // instead; whoever owns it keeps working.
+    if (!owned) {
+      this.cancelPending(win);
+      for (const remove of this.listeners) remove();
+      this.listeners = [];
+      return;
+    }
 
     this.cancelPending(win);
 
     for (const remove of this.listeners) remove();
     this.listeners = [];
 
-    // Both, not just pushState: a library that wrapped replaceState after us
-    // is uninstalled by restoring the original over its wrapper.
-    const push = win.history.pushState as History['pushState'] & PatchedFn;
-    const replace = win.history.replaceState as History['replaceState'] & PatchedFn;
+    // By identity against the shared record, not by the marker: the marker
+    // says "a Grovs patch", which may be another copy's. Restoring this
+    // instance's captured originals over that one puts the page back to a
+    // state it was never in and silently uninstalls every wrapper other
+    // libraries have chained on since. Only the exact installed pair can be
+    // undone, and only while it is still outermost — anything wrapping it
+    // would be uninstalled with it.
+    const record = ownerBox().patch;
     if (
-      push[PATCH_MARKER] &&
-      replace[PATCH_MARKER] &&
-      this.originalPushState &&
-      this.originalReplaceState
+      record &&
+      win.history.pushState === record.push &&
+      win.history.replaceState === record.replace
     ) {
-      win.history.pushState = this.originalPushState;
-      win.history.replaceState = this.originalReplaceState;
+      win.history.pushState = record.originalPush;
+      win.history.replaceState = record.originalReplace;
+      ownerBox().patch = null;
       this.installed = false;
     }
     // Otherwise the patch stays installed and inert — `enabled` is false, so
@@ -201,6 +284,11 @@ export class AutoScreenTracker {
    * were never going to get an adapter.
    */
   private scheduleTrack(): void {
+    // The patch already routes through the owner, but popstate and hashchange
+    // are listeners each copy of the SDK attaches for itself — so without
+    // this, two copies on one page both report every Back and every fragment
+    // change, while pushState is reported once.
+    if (ownerBox().current !== this.ownership) return;
     if (!this.enabled) return;
     const win = getWindow();
     if (!win) return;
@@ -209,6 +297,10 @@ export class AutoScreenTracker {
 
     const run = (): void => {
       this.frame = null;
+      // Again here, not only at scheduling: another copy of the SDK can start
+      // and take the patch over in between, and then both report the same
+      // navigation — this one from a frame already in the queue.
+      if (ownerBox().current !== this.ownership) return;
       this.trackCurrent();
     };
 

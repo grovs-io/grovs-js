@@ -126,8 +126,7 @@ export class ApiService {
     }
     // Absent means "inherit the project default" server-side (the column is
     // tri-state), so an unset option must leave the key out, not send false.
-    // Defined outside this repo, in backend-development-internal:
-    // docs/plans/2026-09-01-js-sdk-clipboard-implementation.md.
+    // Defined outside this repo, in the backend's clipboard design note.
     if (typeof params.copyToClipboardiOS === 'boolean') {
       body['copy_to_clipboard_ios'] = params.copyToClipboardiOS;
     }
@@ -229,7 +228,9 @@ function serializeRedirects(redirects: CustomRedirects): Record<string, unknown>
   const out: Record<string, unknown> = {};
   for (const platform of ['ios', 'android', 'desktop'] as const) {
     const entry = redirects[platform];
-    if (!entry?.link) continue;
+    if (!entry || typeof entry !== 'object' || typeof entry.link !== 'string' || !entry.link) {
+      continue;
+    }
     const serialized: Record<string, unknown> = { url: entry.link };
     if (platform !== 'desktop') {
       serialized['open_app_if_installed'] =

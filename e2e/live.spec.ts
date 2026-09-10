@@ -18,12 +18,12 @@ import { expect, test, type Page } from '@playwright/test';
  *   GROVS_LIVE_BASE_URL  optional — a self-hosted backend origin
  *   GROVS_LIVE_TEST_ENV  optional — "false" to use production (default: test)
  *
- * Without a key the whole file skips rather than fails, so `npm run verify`
- * stays green for anyone who does not have one.
+ * An explicit live run requires a key. `npm run verify` selects only the
+ * local projects, so it never needs live credentials.
  *
  * **The project must list this origin as a linked domain**, exactly as
  * printed — the backend compares the string with no normalisation, so
- * `http://localhost:5174` and `localhost:5174` are different values.
+ * `http://localhost:4175` and `localhost:4175` are different values.
  */
 
 const API_KEY = process.env['GROVS_LIVE_API_KEY'];
@@ -71,10 +71,9 @@ async function configure(page: Page): Promise<void> {
 }
 
 test.describe('live backend', () => {
-  test.skip(
-    !API_KEY,
-    'Set GROVS_LIVE_API_KEY to run the live suite. See the comment at the top of this file.',
-  );
+  test.beforeAll(() => {
+    if (!API_KEY?.trim()) throw new Error('Set GROVS_LIVE_API_KEY to run the live suite. See demo/README.md.');
+  });
   // Real network, one project, shared link state — serial keeps the failures
   // legible and avoids hammering the backend from five workers.
   test.describe.configure({ mode: 'serial', timeout: 60_000 });
@@ -93,13 +92,13 @@ test.describe('live backend', () => {
     expect(auth?.body?.['screen_width']).toBeTruthy();
   });
 
-  test('rejects an unconfigured origin with a usable message', async ({ page }) => {
-    await page.addInitScript(() => {
+  test('rejects invalid project credentials with a usable message', async ({ page }) => {
+    await page.addInitScript((baseURL) => {
       localStorage.setItem(
         'grovs_demo_settings',
-        JSON.stringify({ live: true, apiKey: 'definitely-not-a-real-key', baseURL: '' }),
+        JSON.stringify({ live: true, apiKey: 'definitely-not-a-real-key', baseURL }),
       );
-    });
+    }, BASE_URL);
     await page.goto('/demo/');
     await page.getByRole('button', { name: 'configure()' }).click();
 
@@ -284,23 +283,24 @@ test.describe('live backend', () => {
     }
   });
 
-  test('delivers the final time_spent on tab close', async ({ page }) => {
+  test('issues the final time_spent request when a real tab closes', async ({ page, context }) => {
+    // Observe outside the page: an in-page log disappears at close. This
+    // asserts browser dispatch, not database ingestion; delivery.spec.ts and
+    // backend integration tests cover receipt and ingestion separately.
+    const sent: Record<string, unknown>[] = [];
+    context.on('request', (request) => {
+      if (new URL(request.url()).pathname !== '/api/v1/sdk/events/batch') return;
+      const body = request.postDataJSON() as { events?: Record<string, unknown>[] } | null;
+      sent.push(...(body?.events ?? []));
+    });
     await openLive(page);
     await configure(page);
     await page.waitForTimeout(1500);
-
-    await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
-
-    await expect
-      .poll(
-        async () =>
-          (await requests(page))
-            .filter((r) => r.path === '/events/batch' && r.keepalive)
-            .flatMap((r) => (r.body?.['events'] as Record<string, unknown>[] | undefined) ?? [])
-            .some((e) => e['event'] === 'time_spent'),
-        { timeout: 20_000 },
-      )
-      .toBe(true);
+    const beforeClose = sent.length;
+    await page.close();
+    await expect.poll(() => sent.slice(beforeClose).some((e) => e['event'] === 'time_spent'), {
+      timeout: 20_000,
+    }).toBe(true);
   });
 
   test('an identified visitor is recognised on a second visit', async ({ page }) => {

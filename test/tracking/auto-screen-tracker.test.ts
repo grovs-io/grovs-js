@@ -438,8 +438,16 @@ describe('re-enabling after another library patched over us', () => {
     second.tracker.stop();
   });
 
-  // Two live clients on one page stays unsupported (docs/CONTEXT.md).
-  it('does not let a second live tracker take the patch over', async () => {
+  // Two live clients on one page stays unsupported, but it
+  // has to fail safely: exactly one of them tracks, and the one that started
+  // most recently is it — the same rule the facade applies when a second
+  // configure() replaces the client.
+  //
+  // The alternative, letting the first owner keep it, strands the second for
+  // the life of the page: the marker still reads "installed" so it never
+  // re-patches, and once the first stops the patch reports to nobody. That is
+  // the dual-copy failure — a CDN script tag beside an npm install.
+  it('hands the patch to the most recently started tracker, one owner at a time', async () => {
     const first = make();
     first.tracker.start();
 
@@ -451,10 +459,215 @@ describe('re-enabling after another library patched over us', () => {
     history.pushState({}, '', '/shared');
     await settle();
 
-    expect(first.onScreen).toHaveBeenCalledWith('/shared');
-    expect(second.onScreen).not.toHaveBeenCalled();
+    expect(second.onScreen).toHaveBeenCalledWith('/shared');
+    expect(first.onScreen).not.toHaveBeenCalled();
+
+    // And the displaced tracker stopping does not take navigation with it.
     first.tracker.stop();
+    second.onScreen.mockClear();
+    history.pushState({}, '', '/after-first-stops');
+    await settle();
+    expect(second.onScreen).toHaveBeenCalledWith('/after-first-stops');
+
     second.tracker.stop();
+  });
+
+  // The dual-copy case: a CDN script tag beside an npm install. Two real
+  // module instances, so each has its own module scope, exactly as two
+  // bundles on one page would. `Symbol.for` is shared between them, which is
+  // why the marker was seen and the owner was not.
+  it('a second copy of the SDK on the page still sees navigation', async () => {
+    const copyA = await import('../../src/tracking/auto-screen-tracker');
+    vi.resetModules();
+    const copyB = await import('../../src/tracking/auto-screen-tracker');
+    expect(copyB.AutoScreenTracker).not.toBe(copyA.AutoScreenTracker);
+
+    const onA = vi.fn();
+    const onB = vi.fn();
+    const a = new copyA.AutoScreenTracker({ aliases: new ScreenAliases(), onScreen: onA });
+    const b = new copyB.AutoScreenTracker({ aliases: new ScreenAliases(), onScreen: onB });
+
+    a.start();
+    b.start();
+    onA.mockClear();
+    onB.mockClear();
+
+    history.pushState({}, '', '/spa');
+    await settle();
+    expect(onB).toHaveBeenCalledWith('/spa');
+    expect(onA).not.toHaveBeenCalled();
+
+    // The first copy going away must not blind the second for the rest of
+    // the page's life, which is what a module-local owner did.
+    a.stop();
+    onB.mockClear();
+    history.pushState({}, '', '/after-the-other-copy-stopped');
+    await settle();
+    expect(onB).toHaveBeenCalledWith('/after-the-other-copy-stopped');
+
+    b.stop();
+    copyB.__resetPatchOwner();
+  });
+
+  // pushState goes through the shared owner, but popstate and hashchange are
+  // listeners each copy attaches for itself — so Back and fragment changes
+  // were reported by every copy on the page while pushState was reported once.
+  it('reports Back once when two copies of the SDK are loaded', async () => {
+    const copyA = await import('../../src/tracking/auto-screen-tracker');
+    vi.resetModules();
+    const copyB = await import('../../src/tracking/auto-screen-tracker');
+
+    const onA = vi.fn();
+    const onB = vi.fn();
+    const a = new copyA.AutoScreenTracker({ aliases: new ScreenAliases(), onScreen: onA });
+    const b = new copyB.AutoScreenTracker({ aliases: new ScreenAliases(), onScreen: onB });
+    a.start();
+    b.start();
+    onA.mockClear();
+    onB.mockClear();
+
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    await settle();
+
+    expect(onB).toHaveBeenCalledTimes(1);
+    expect(onA).not.toHaveBeenCalled();
+
+    a.stop();
+    b.stop();
+    copyB.__resetPatchOwner();
+  });
+
+  // A frame scheduled by the owner, then a second copy takes the patch over
+  // before it runs. Both would report the same navigation.
+  it('drops a deferred report when the patch changed hands before the frame ran', async () => {
+    const copyA = await import('../../src/tracking/auto-screen-tracker');
+    vi.resetModules();
+    const copyB = await import('../../src/tracking/auto-screen-tracker');
+
+    const onA = vi.fn();
+    const onB = vi.fn();
+    const a = new copyA.AutoScreenTracker({ aliases: new ScreenAliases(), onScreen: onA });
+    a.start();
+    onA.mockClear();
+
+    // A owns the patch and schedules a frame for this navigation.
+    history.pushState({}, '', '/mid-flight');
+
+    // B starts before that frame runs and takes ownership.
+    const b = new copyB.AutoScreenTracker({ aliases: new ScreenAliases(), onScreen: onB });
+    b.start();
+    onB.mockClear();
+    await settle();
+
+    expect(onA).not.toHaveBeenCalled();
+
+    a.stop();
+    b.stop();
+    copyB.__resetPatchOwner();
+  });
+
+  // The full disable/enable interleaving between two independently bundled
+  // copies. The second copy adopted the first's patch, so it never captured
+  // originals; when the first later restored them, the second was left
+  // holding an `installed` flag for a patch that no longer existed.
+  it('re-patches when the other copy removed the shared patch', async () => {
+    const copyA = await import('../../src/tracking/auto-screen-tracker');
+    vi.resetModules();
+    const copyB = await import('../../src/tracking/auto-screen-tracker');
+
+    const onB = vi.fn();
+    const a = new copyA.AutoScreenTracker({ aliases: new ScreenAliases(), onScreen: vi.fn() });
+    const b = new copyB.AutoScreenTracker({ aliases: new ScreenAliases(), onScreen: onB });
+
+    a.start();
+    b.start();
+
+    a.stop();
+    a.start();
+    a.stop(); // A owns it by now, so this one really does uninstall.
+
+    b.stop();
+    b.start();
+    onB.mockClear();
+
+    history.pushState({}, '', '/after-the-other-copy-uninstalled');
+    await settle();
+
+    expect(onB).toHaveBeenCalledWith('/after-the-other-copy-uninstalled');
+    b.stop();
+    copyB.__resetPatchOwner();
+  });
+
+  // Uninstalling is only safe against the exact pair that is installed. A
+  // copy restoring its own captured originals over another copy's patch
+  // writes the page back to a state it was never in, taking out every
+  // wrapper other libraries chained on since.
+  it('never uninstalls another copy\'s patch, or the wrappers on top of it', async () => {
+    const copyA = await import('../../src/tracking/auto-screen-tracker');
+    vi.resetModules();
+    const copyB = await import('../../src/tracking/auto-screen-tracker');
+
+    const a = new copyA.AutoScreenTracker({ aliases: new ScreenAliases(), onScreen: vi.fn() });
+    const b = new copyB.AutoScreenTracker({ aliases: new ScreenAliases(), onScreen: vi.fn() });
+    a.start();
+    b.start();
+
+    // Another vendor wraps both methods after the SDK is in place.
+    const vendorPush = vi.fn();
+    const vendorReplace = vi.fn();
+    const grovsPush = history.pushState.bind(history);
+    const grovsReplace = history.replaceState.bind(history);
+    history.pushState = function (...args: Parameters<History['pushState']>) {
+      vendorPush();
+      grovsPush(...args);
+    } as History['pushState'];
+    history.replaceState = function (...args: Parameters<History['replaceState']>) {
+      vendorReplace();
+      grovsReplace(...args);
+    } as History['replaceState'];
+
+    b.stop();
+    b.start();
+    a.stop();
+    a.start();
+    a.stop();
+
+    vendorPush.mockClear();
+    vendorReplace.mockClear();
+    history.pushState({}, '', '/still-instrumented');
+    history.replaceState({}, '', '/still-instrumented');
+
+    // The other library's instrumentation is still running.
+    expect(vendorPush).toHaveBeenCalledTimes(1);
+    expect(vendorReplace).toHaveBeenCalledTimes(1);
+
+    b.stop();
+    copyB.__resetPatchOwner();
+  });
+
+  // The copy that uninstalls need not be the copy that installed. An adopting
+  // copy captured no originals of its own, so it can only put back what the
+  // shared record holds.
+  it('a copy that adopted the patch restores the right originals', async () => {
+    const before = history.pushState;
+    const copyA = await import('../../src/tracking/auto-screen-tracker');
+    vi.resetModules();
+    const copyB = await import('../../src/tracking/auto-screen-tracker');
+
+    const a = new copyA.AutoScreenTracker({ aliases: new ScreenAliases(), onScreen: vi.fn() });
+    const b = new copyB.AutoScreenTracker({ aliases: new ScreenAliases(), onScreen: vi.fn() });
+    a.start();
+    // B adopts A's patch and, starting last, owns it.
+    b.start();
+
+    // B is the one told to stop while the patch is still installed.
+    b.stop();
+
+    expect(history.pushState).toBe(before);
+    expect(() => history.pushState({}, '', '/works')).not.toThrow();
+
+    a.stop();
+    copyB.__resetPatchOwner();
   });
 
   // Restarting the same tracker over a patch it could not uninstall: stop()

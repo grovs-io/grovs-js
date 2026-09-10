@@ -11,6 +11,8 @@ import {
 const LIST_MODAL_ID = 'Grovs-modal';
 const PAGE_MODAL_ID = 'Grovs-page-modal';
 const PAGE_MODAL_CLASS = 'grovs-page-modal';
+/** More than a few stacked modals is a misconfiguration, not a campaign. */
+const MAX_AUTOMATIC_MESSAGES = 5;
 
 /**
  * Absolute http(s) URLs only. Notification#access_url arrives scheme-less
@@ -66,8 +68,12 @@ export class MessagesUI {
   private badge: HTMLElement | null = null;
   /** A repeated page reads as exhaustion instead of looping the auto-fill. */
   private readonly renderedIds = new Set<number>();
-  private escListener: ((event: KeyboardEvent) => void) | null = null;
+  private keyListener: ((event: KeyboardEvent) => void) | null = null;
+  /** Where focus was before each modal opened, so closing gives it back. */
+  private readonly returnFocus = new Map<HTMLElement, HTMLElement | null>();
   private readonly theme: ResolvedMessagesTheme;
+  /** Parsed once; adopted by every modal root. */
+  private sheet: CSSStyleSheet | null = null;
 
   constructor(
     private readonly doc: Document,
@@ -84,33 +90,152 @@ export class MessagesUI {
       host.setAttribute(name, value);
     }
     const root = host.attachShadow({ mode: 'open' });
+    const css = buildStylesheet(this.theme);
+    // A constructed stylesheet is CSSOM, which a style-src policy does not
+    // govern; an injected <style> is blocked by any policy without
+    // 'unsafe-inline'. Falls back where the API is missing.
+    const win = this.doc.defaultView;
+    try {
+      if (win && 'adoptedStyleSheets' in root && 'replaceSync' in win.CSSStyleSheet.prototype) {
+        if (!this.sheet) {
+          // Cached only once it holds the rules: assigning first meant a
+          // throw from replaceSync left an empty sheet in the cache, and
+          // every later modal adopted it and rendered unstyled.
+          const sheet = new win.CSSStyleSheet();
+          sheet.replaceSync(css);
+          this.sheet = sheet;
+        }
+        root.adoptedStyleSheets = [...root.adoptedStyleSheets, this.sheet];
+        return root;
+      }
+    } catch {
+      /* fall through to the element */
+    }
     const style = this.doc.createElement('style');
-    style.textContent = buildStylesheet(this.theme);
+    style.textContent = css;
     root.appendChild(style);
     return root;
   }
 
-  private ensureEscListener(): void {
-    if (this.escListener) return;
+  private ensureKeyListener(): void {
+    if (this.keyListener) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      const top = [...this.ownModals].pop();
-      if (top) {
-        top.remove();
-        this.ownModals.delete(top);
-        this.releaseEscListenerIfIdle();
+      const top = this.topModal();
+      if (!top) {
+        this.releaseKeyListenerIfIdle();
         return;
       }
-      this.close();
+      if (event.key !== 'Escape') return;
+      if (top !== this.host) this.closeDetail(top);
+      else this.close();
     };
     this.doc.addEventListener('keydown', onKey);
-    this.escListener = onKey;
+    this.keyListener = onKey;
   }
 
-  private releaseEscListenerIfIdle(): void {
-    if (this.host || this.ownModals.size > 0 || !this.escListener) return;
-    this.doc.removeEventListener('keydown', this.escListener);
-    this.escListener = null;
+  private releaseKeyListenerIfIdle(): void {
+    if (this.host || this.ownModals.size > 0 || !this.keyListener) return;
+    this.doc.removeEventListener('keydown', this.keyListener);
+    this.keyListener = null;
+  }
+
+  /**
+   * The modal focus belongs to: the newest detail, else the list. A host
+   * framework that swaps <body> detaches modals without telling us, and a
+   * trap on a detached modal would cancel every Tab on the page — so the
+   * detached are forgotten here.
+   */
+  private topModal(): HTMLElement | null {
+    for (const modal of this.ownModals) {
+      if (!modal.isConnected) this.ownModals.delete(modal);
+    }
+    if (this.host && !this.host.isConnected) {
+      // Forget it, do not close(): close() also removes the detail modals,
+      // which are still on the page and still the visitor's, and hands focus
+      // back to whatever the host page focused since.
+      this.host = null;
+      this.overlay = null;
+      this.listElement = null;
+      this.badge = null;
+      this.releaseKeyListenerIfIdle();
+    }
+    return [...this.ownModals].pop() ?? this.host;
+  }
+
+  private focusables(root: ShadowRoot): HTMLElement[] {
+    return Array.from(
+      root.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], iframe, [tabindex]:not([tabindex="-1"])',
+      ),
+    ).filter((element) => !element.classList.contains('grovs-sentinel'));
+  }
+
+  /** The element that held focus, reaching through shadow roots. */
+  private activeElement(): HTMLElement | null {
+    let element = this.doc.activeElement;
+    while (element?.shadowRoot?.activeElement) element = element.shadowRoot.activeElement;
+    return element && typeof (element as HTMLElement).focus === 'function'
+      ? (element as HTMLElement)
+      : null;
+  }
+
+  /**
+   * aria-modal promises the page behind is inert, and the browser does not
+   * do that for a div. Two focusable sentinels bracket the card: sequential
+   * focus leaving it in either direction lands on one, which hands focus to
+   * the opposite end. This is the only mechanism that also covers a Tab
+   * pressed inside the message iframe, which the host document never sees —
+   * and it cancels nothing, so a modal the host page detaches cannot swallow
+   * keys.
+   */
+  private sentinel(root: ShadowRoot, edge: 'start' | 'end'): HTMLElement {
+    const sentinel = this.doc.createElement('div');
+    sentinel.className = 'grovs-sentinel';
+    sentinel.tabIndex = 0;
+    // Property assignments, not a style attribute: CSP's style-src blocks the
+    // attribute form but not CSSOM. No aria-hidden — a focusable hidden
+    // element is what accessibility audits flag.
+    sentinel.style.position = 'fixed';
+    sentinel.style.width = '1px';
+    sentinel.style.height = '1px';
+    sentinel.style.opacity = '0';
+    sentinel.style.pointerEvents = 'none';
+    sentinel.addEventListener('focus', () => {
+      const focusable = this.focusables(root);
+      (edge === 'start' ? focusable[focusable.length - 1] : focusable[0])?.focus();
+    });
+    return sentinel;
+  }
+
+  /** Resolves true once <body> exists; false only when the document never
+   *  finishes parsing (it is being torn down). */
+  private bodyReady(): Promise<boolean> {
+    if (this.doc.body) return Promise.resolve(true);
+    // Parsed and still no body: it is not coming.
+    if (this.doc.readyState !== 'loading') return Promise.resolve(false);
+    return new Promise((resolve) => {
+      this.doc.addEventListener('DOMContentLoaded', () => resolve(this.doc.body !== null), {
+        once: true,
+      });
+    });
+  }
+
+  private takeFocus(modal: HTMLElement, target: HTMLElement): void {
+    this.returnFocus.set(modal, this.activeElement());
+    target.focus();
+  }
+
+  private giveFocusBack(modal: HTMLElement): void {
+    const previous = this.returnFocus.get(modal) ?? null;
+    this.returnFocus.delete(modal);
+    if (previous?.isConnected) previous.focus();
+  }
+
+  private closeDetail(modal: HTMLElement): void {
+    modal.remove();
+    this.ownModals.delete(modal);
+    this.giveFocusBack(modal);
+    this.releaseKeyListenerIfIdle();
   }
 
   private closeButton(onClose: () => void): HTMLElement {
@@ -123,6 +248,13 @@ export class MessagesUI {
   }
 
   async showMessagesList(): Promise<void> {
+    if (!this.service.canShowUI) {
+      this.logger.warn('showMessagesList() ignored: the SDK is disabled.');
+      return;
+    }
+    if (this.doc.getElementById(LIST_MODAL_ID)) return;
+    const valid = this.service.uiGuard();
+    if (!(await this.bodyReady()) || !valid()) return;
     if (this.doc.getElementById(LIST_MODAL_ID)) return;
 
     const host = this.doc.createElement('div');
@@ -170,8 +302,10 @@ export class MessagesUI {
       }
     });
 
+    card.appendChild(this.sentinel(root, 'start'));
     card.appendChild(header);
     card.appendChild(list);
+    card.appendChild(this.sentinel(root, 'end'));
     backdrop.appendChild(card);
     root.appendChild(backdrop);
     this.doc.body.appendChild(host);
@@ -186,8 +320,8 @@ export class MessagesUI {
     this.page = 1;
     this.isLoading = false;
     this.exhausted = false;
-    this.ensureEscListener();
-    closeButton.focus();
+    this.ensureKeyListener();
+    this.takeFocus(host, closeButton);
 
     await this.loadMessages();
     // The server total covers unloaded pages; the per-row tally set during
@@ -209,7 +343,21 @@ export class MessagesUI {
     // possible only if the configure() close-before-replace ordering ever
     // changes — the right move is still to not mint a duplicate.
     const modalId = `${PAGE_MODAL_ID}-${message.id}`;
-    if (this.doc.getElementById(modalId)) return;
+    if (!this.service.canShowUI || this.doc.getElementById(modalId)) return;
+    if (!this.doc.body) {
+      if (this.doc.readyState !== 'loading') return;
+      // configure() in <head> with a fast backend: no body to render into
+      // yet. A reset meanwhile makes this the previous visitor's message.
+      const valid = this.service.uiGuard();
+      this.doc.addEventListener(
+        'DOMContentLoaded',
+        () => {
+          if (valid()) this.openPage(message);
+        },
+        { once: true },
+      );
+      return;
+    }
 
     const modal = this.doc.createElement('div');
     modal.id = modalId;
@@ -226,7 +374,6 @@ export class MessagesUI {
     card.setAttribute('role', 'dialog');
     card.setAttribute('aria-modal', 'true');
     card.setAttribute('aria-label', message.title);
-    this.ensureEscListener();
 
     const header = this.doc.createElement('div');
     header.className = 'grovs-header';
@@ -234,42 +381,56 @@ export class MessagesUI {
     heading.className = 'grovs-heading';
     heading.textContent = message.title;
     header.appendChild(heading);
-    header.appendChild(
-      this.closeButton(() => {
-        modal.remove();
-        this.ownModals.delete(modal);
-        this.releaseEscListenerIfIdle();
-      }),
-    );
+    const closeButton = this.closeButton(() => this.closeDetail(modal));
+    header.appendChild(closeButton);
 
     const frame = this.doc.createElement('iframe');
     // Notification content is remote and rendered inside the customer's page.
     // Sandboxing without allow-same-origin denies it access to the embedding
     // document, and the scheme check keeps javascript:/data: URLs out.
-    frame.setAttribute('sandbox', 'allow-scripts allow-popups allow-forms');
+    // allow-popups-to-escape-sandbox: without it a target="_blank" link out of
+    // a message opens its destination with an opaque origin, where storage
+    // access throws — so a login or checkout page opened from a message
+    // simply breaks. The frame itself stays sandboxed, and without
+    // allow-same-origin it still cannot reach the embedding document.
+    frame.setAttribute(
+      'sandbox',
+      'allow-scripts allow-popups allow-forms allow-popups-to-escape-sandbox',
+    );
     frame.setAttribute('referrerpolicy', 'no-referrer');
     frame.className = 'grovs-frame';
     frame.src = safeUrl(message.access_url);
 
+    card.appendChild(this.sentinel(root, 'start'));
     card.appendChild(header);
     card.appendChild(frame);
+    card.appendChild(this.sentinel(root, 'end'));
     backdrop.appendChild(card);
     root.appendChild(backdrop);
     this.doc.body.appendChild(modal);
     this.ownModals.add(modal);
+    this.ensureKeyListener();
+    this.takeFocus(modal, closeButton);
 
     void this.service.markMessageAsRead(message.id);
   }
 
   close(): void {
-    if (this.escListener) {
-      this.doc.removeEventListener('keydown', this.escListener);
-      this.escListener = null;
+    if (this.keyListener) {
+      this.doc.removeEventListener('keydown', this.keyListener);
+      this.keyListener = null;
     }
+    // Back to where the visitor was before the first of these opened,
+    // whatever was stacked on top of it since: the list if there is one,
+    // else the oldest detail (automatic display opens those alone).
+    const [oldest] = this.ownModals;
+    const origin = this.host ?? oldest ?? null;
     for (const modal of this.ownModals) modal.remove();
     this.ownModals.clear();
     this.host?.remove();
     this.host = null;
+    if (origin) this.giveFocusBack(origin);
+    this.returnFocus.clear();
     this.overlay = null;
     this.listElement = null;
     this.badge = null;
@@ -285,7 +446,17 @@ export class MessagesUI {
    */
   async displayAutomaticMessages(): Promise<void> {
     const messages = await this.service.messagesForAutomaticDisplay();
-    for (const message of messages) this.openPage(message);
+    // Capped: each one is a modal, a remote iframe and a mark-as-read
+    // request, and nothing on the response side bounds the list. A console
+    // misconfiguration should cost a few modals, not the page.
+    const shown = messages.slice(0, MAX_AUTOMATIC_MESSAGES);
+    if (messages.length > shown.length) {
+      this.logger.warn(
+        `${messages.length} messages are flagged for automatic display; showing ` +
+          `the first ${MAX_AUTOMATIC_MESSAGES}.`,
+      );
+    }
+    for (const message of shown) this.openPage(message);
   }
 
   private async loadMessages(): Promise<void> {
@@ -336,12 +507,28 @@ export class MessagesUI {
     if (messages.length === 0 && this.page === 1) {
       const empty = this.doc.createElement('div');
       empty.className = 'grovs-empty';
-      // Static markup only — never interpolate message content here.
-      empty.innerHTML =
-        '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" ' +
-        'stroke="currentColor" stroke-width="1.5" aria-hidden="true">' +
-        '<path d="M6 8a6 6 0 1 1 12 0c0 7 3 8 3 8H3s3-1 3-8"/>' +
-        '<path d="M10 21h4"/></svg>No messages yet.';
+      // DOM APIs, not innerHTML: a Trusted Types policy rejects the string
+      // form even for static markup.
+      const svgNs = 'http://www.w3.org/2000/svg';
+      const icon = this.doc.createElementNS(svgNs, 'svg');
+      for (const [name, value] of [
+        ['width', '28'],
+        ['height', '28'],
+        ['viewBox', '0 0 24 24'],
+        ['fill', 'none'],
+        ['stroke', 'currentColor'],
+        ['stroke-width', '1.5'],
+        ['aria-hidden', 'true'],
+      ]) {
+        icon.setAttribute(name!, value!);
+      }
+      for (const d of ['M6 8a6 6 0 1 1 12 0c0 7 3 8 3 8H3s3-1 3-8', 'M10 21h4']) {
+        const path = this.doc.createElementNS(svgNs, 'path');
+        path.setAttribute('d', d);
+        icon.appendChild(path);
+      }
+      empty.appendChild(icon);
+      empty.appendChild(this.doc.createTextNode('No messages yet.'));
       list.appendChild(empty);
       return;
     }

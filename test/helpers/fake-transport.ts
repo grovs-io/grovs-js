@@ -26,8 +26,17 @@ export class FakeTransport implements Transport {
     return this.enqueue({ ok: status >= 200 && status < 300, status, body });
   }
 
+  /** When set, the next request resolves with this promise instead: for
+   *  tests that need a response to arrive after something else happened. */
+  hold: Promise<TransportResponse> | null = null;
+
   send(req: TransportRequest): Promise<TransportResponse> {
     this.requests.push(req);
+    const held = this.hold;
+    if (held) {
+      this.hold = null;
+      return held;
+    }
     return Promise.resolve(this.queue.shift() ?? this.fallback);
   }
 

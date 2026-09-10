@@ -18,6 +18,13 @@ export interface QueuedEvent {
   eventName?: string;
   createdAt: number;
   path?: string;
+  /**
+   * Set once the event's attribution is settled and it may be transmitted —
+   * with a path, or explicitly without one. Persisted, so a page load that
+   * finds it already true knows an earlier page could have sent this event
+   * and must not change its body. See EventsHandler.onPathResolved.
+   */
+  pathFinal?: true;
   engagementTime?: number;
   tags?: string[];
   properties?: Record<string, unknown>;

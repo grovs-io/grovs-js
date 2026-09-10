@@ -2,7 +2,14 @@ import { gzipSync } from 'node:zlib';
 import { readFileSync, statSync } from 'node:fs';
 
 const FILE = 'dist/grovs.global.js';
-const BUDGET_BYTES = 20 * 1024;
+// Raised from 20 KB after six review passes added correctness the SDK needs:
+// per-project storage scoping, bounded queue and sanitizer, cross-tab reset,
+// bounded auth retry, and a CSP- and Trusted-Types-safe messages UI. The gate
+// exists to catch bloat, not to be shaved past with shorter warning strings —
+// at 20 KB it had 237 B of headroom, so the next fix would have failed CI for
+// a reason unrelated to size. 24 KB restores a working margin and still
+// catches anything that grows the bundle by a fifth.
+const BUDGET_BYTES = 24 * 1024;
 
 try {
   statSync(FILE);

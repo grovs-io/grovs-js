@@ -40,6 +40,21 @@ export class SessionManager {
   /** Mirrors the last write so touch() can throttle writes to one a second.
    *  Reads still go to storage — another tab may have moved the stamp. */
   private cachedActivity: number | null = null;
+  /**
+   * The session this tab minted, kept when the store refused to take it.
+   *
+   * A store can start refusing writes mid-visit — a full origin quota is the
+   * common way — and the probe at startup will have succeeded. Reading back
+   * null then minted a *new* id on every single read, so consecutive events
+   * carried different sessions and time_spent was attributed to none of them.
+   * Storage still wins when it has a value: a sibling tab's id is shared and
+   * this one is not.
+   */
+  private memorySessionId: string | null = null;
+  /** What was in the store when this tab rotated, so recovery can tell the
+   *  id it replaced from one a sibling has written since. */
+  private replacedSessionId: string | null = null;
+  private memoryActivity: number | null = null;
 
   constructor(
     private readonly storage: Storage,
@@ -49,13 +64,38 @@ export class SessionManager {
   /** The current session id, rotating first if the shared idle window elapsed. */
   currentSessionId(): string {
     this.rotateIfIdle();
-    let id = this.storage.get(SESSION_ID_KEY);
+    // Memory first when it holds something: it is only ever set because the
+    // store refused our write, and the value still sitting in the store is
+    // then the one we tried to replace. Reading it back rotated a session
+    // that had already been rotated, over and over.
+    let id = this.memorySessionId ?? this.storage.get(SESSION_ID_KEY);
     if (!id) {
       id = randomUUID();
-      this.storage.set(SESSION_ID_KEY, id);
+      this.write(SESSION_ID_KEY, id);
+    } else if (this.memorySessionId !== null) {
+      // The store refused this id when it was minted. Once it takes writes
+      // again the id has to go back in, or a sibling reads the one this tab
+      // replaced. But only over that same stale value: a sibling that has
+      // started a session since owns it, and a session is a person rather
+      // than a tab — so adopt theirs instead of overwriting it.
+      const stored = this.storage.get(SESSION_ID_KEY);
+      if (stored === null || stored === this.replacedSessionId) {
+        this.write(SESSION_ID_KEY, this.memorySessionId);
+      } else {
+        this.memorySessionId = null;
+        this.replacedSessionId = null;
+        id = stored;
+      }
     }
     this.touch();
     return id;
+  }
+
+  /** Writes through, and remembers the value when the store refuses it. */
+  private write(key: string, value: string): void {
+    const stored = this.storage.set(key, value);
+    if (key === SESSION_ID_KEY) this.memorySessionId = stored ? null : value;
+    else this.memoryActivity = stored ? null : Number(value);
   }
 
   /**
@@ -68,7 +108,8 @@ export class SessionManager {
     if (last === null) return false;
     if (this.clock.now() - last <= IDLE_TIMEOUT_MS) return false;
 
-    this.storage.set(SESSION_ID_KEY, randomUUID());
+    this.replacedSessionId = this.storage.get(SESSION_ID_KEY);
+    this.write(SESSION_ID_KEY, randomUUID());
     this.cachedActivity = null;
     this.touch();
     return true;
@@ -76,6 +117,9 @@ export class SessionManager {
 
   reset(): void {
     this.cachedActivity = null;
+    this.memorySessionId = null;
+    this.replacedSessionId = null;
+    this.memoryActivity = null;
     this.storage.remove(SESSION_ID_KEY);
     this.storage.remove(SESSION_ACTIVITY_KEY);
   }
@@ -101,20 +145,25 @@ export class SessionManager {
     // the length of the skew. Treat it as corrupt and take the stamp back.
     if (last !== null && last > now + IDLE_TIMEOUT_MS) {
       this.cachedActivity = now;
-      this.storage.set(SESSION_ACTIVITY_KEY, String(now));
+      this.write(SESSION_ACTIVITY_KEY, String(now));
       return;
     }
 
     if (last !== null && last > now) return;
     if (this.cachedActivity !== null && now - this.cachedActivity < 1000) return;
     this.cachedActivity = now;
-    this.storage.set(SESSION_ACTIVITY_KEY, String(now));
+    this.write(SESSION_ACTIVITY_KEY, String(now));
   }
 
   private lastActivity(): number | null {
     const raw = this.storage.get(SESSION_ACTIVITY_KEY);
-    if (raw === null) return null;
-    const parsed = Number(raw);
-    return Number.isFinite(parsed) ? parsed : null;
+    const parsed = raw === null ? null : Number(raw);
+    const stored = parsed !== null && Number.isFinite(parsed) ? parsed : null;
+    if (this.memoryActivity === null) return stored;
+    if (stored === null) return this.memoryActivity;
+    // The newer of the two. The field is monotonic, a sibling tab may have
+    // moved it on, and our own refused write is only in memory — taking the
+    // stale stored one would rotate a live session.
+    return Math.max(stored, this.memoryActivity);
   }
 }

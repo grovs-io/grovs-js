@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { Script } from 'node:vm';
 
 /**
@@ -35,6 +35,16 @@ check('esm', typeof esm.default?.configure === 'function', 'default.configure mi
 check('esm', typeof esm.default === 'function', 'default not constructable (v1 `new Grovs(...)`)');
 check('esm', esm.GrovsError?.authenticationFailed === 1, 'GrovsError missing');
 check('esm', esm.SDK_VERSION === SDK_VERSION, `SDK_VERSION is not ${SDK_VERSION}`);
+
+// --- Declarations: each condition names the declaration file matching its
+// module format. Pointing both at .d.ts made a Node16 CommonJS consumer fail
+// with TS1471 while the runtime checks above passed.
+const { exports: exportsMap } = require('../package.json');
+const importTypes = exportsMap['.']?.import?.types;
+const requireTypes = exportsMap['.']?.require?.types;
+check('types', importTypes === './dist/grovs.d.ts', `import.types is ${importTypes}`);
+check('types', requireTypes === './dist/grovs.d.cts', `require.types is ${requireTypes}`);
+check('types', existsSync('dist/grovs.d.cts'), 'dist/grovs.d.cts missing');
 
 // --- IIFE: one global carrying the facade *and* the named exports ---
 const sandbox = {};

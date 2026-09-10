@@ -13,7 +13,8 @@ export class LinkGenerator {
    * receive an error and a success for one call. Every failure path here
    * returns exactly once.
    */
-  async generateLink(params: CreateLinkParams): Promise<string | null> {
+  async generateLink(params?: CreateLinkParams | null): Promise<string | null> {
+    const input = params ?? {};
     if (!this.client.isEnabled) return null;
 
     if (!this.client.isAuthenticated()) {
@@ -26,7 +27,34 @@ export class LinkGenerator {
       return null;
     }
 
-    const response = await this.client.service.createLink(params);
+    // The params are serialized into the request; a bigint or a cycle
+    // anywhere in them throws, and the documented contract is null plus
+    // onError.
+    try {
+      // Both: the API serializes `data` on its own, and a non-enumerable
+      // property is invisible to a stringify of the whole object.
+      JSON.stringify(input);
+      if (input.data !== undefined) JSON.stringify(input.data);
+    } catch {
+      this.client.log.reportError(
+        GrovsError.linkGenerationFailed,
+        'The link parameters could not be serialized to JSON.',
+      );
+      return null;
+    }
+
+    const generation = this.client.lifecycleGeneration;
+    const response = await this.client.service.createLink(input);
+    // A reset since the request left means this link is the previous
+    // visitor's; messages and the payload lookup check the same way. Reported
+    // like every other failure here — the contract is null plus onError.
+    if (generation !== this.client.lifecycleGeneration) {
+      this.client.log.reportError(
+        GrovsError.linkGenerationFailed,
+        'The SDK was reset while the link was being generated.',
+      );
+      return null;
+    }
 
     if (!response.ok) {
       this.client.log.reportError(
@@ -57,7 +85,7 @@ export class LinkGenerator {
    * The body is passed through untyped: it carries whatever the backend
    * declares for a link, including the tri-state `copy_to_clipboard_ios` /
    * `copy_to_clipboard_android` (`true` / `false` / `null` for inherit; see
-   * the backend-development-internal plan cited in net/api.ts).
+   * the backend design note cited in net/api.ts).
    */
   async linkDetails(path: string): Promise<Record<string, unknown> | null> {
     if (!this.client.isEnabled) return null;
@@ -71,7 +99,15 @@ export class LinkGenerator {
       return null;
     }
 
+    const generation = this.client.lifecycleGeneration;
     const response = await this.client.service.linkDetails(path);
+    if (generation !== this.client.lifecycleGeneration) {
+      this.client.log.reportError(
+        GrovsError.networkRequestFailed,
+        'The SDK was reset while the link details were being fetched.',
+      );
+      return null;
+    }
     if (!response.ok) {
       this.client.log.reportError(
         GrovsError.networkRequestFailed,

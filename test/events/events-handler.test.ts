@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { EventsHandler } from '../../src/events/events-handler';
+import { EventsHandler, __resetPageAttribution } from '../../src/events/events-handler';
 import { PersistedQueue } from '../../src/storage/persisted-queue';
 import { SessionManager } from '../../src/core/session';
 import { ApiService } from '../../src/net/api';
@@ -517,8 +517,11 @@ describe('the exit flush and the drain can overlap', () => {
   // whenever navigation cancels that ordinary request, and it is the one event
   // that cannot be re-sent. A duplicate is the backend's dedup window to
   // absorb; this is the trade the module makes everywhere else.
-  it('sends the terminal batch even while an ordinary drain holds the same events', async () => {
-    const { handler, transport } = gatedHarness();
+  // A drain in flight either completes or is cancelled by the unload; a
+  // cancelled batch stays queued for the next page load. Sending it again
+  // from the exit path delivered it twice whenever a hide overlapped a tick.
+  it('does not send events an ordinary drain already holds', async () => {
+    const { handler, transport, queue } = gatedHarness();
     handler.onPathResolved(null);
     handler.log('time_spent', 12);
 
@@ -526,12 +529,44 @@ describe('the exit flush and the drain can overlap', () => {
     const drain = handler.flush();
     handler.flushOnExit();
 
-    const exit = transport.requestsTo('/events/batch')[1];
-    const events = (exit?.body as { events: Record<string, unknown>[] }).events;
-    expect(events.map((e) => e['event'])).toContain('time_spent');
-    expect(exit?.keepalive).toBe(true);
+    expect(transport.requestsTo('/events/batch')).toHaveLength(1);
     transport.release();
     await drain;
+    expect(queue.size()).toBe(0);
+  });
+
+  it('await flush() waits for a keepalive request still in flight', async () => {
+    const { handler, transport, queue } = gatedHarness();
+    handler.onPathResolved(null);
+    handler.log('time_spent', 12);
+
+    transport.block();
+    handler.flushOnExit();
+    let settled = false;
+    const flushed = handler.flush().then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    transport.release();
+    await flushed;
+    expect(queue.size()).toBe(0);
+  });
+
+  it('reports per-event rejections from the keepalive path too', () => {
+    const onError = vi.fn();
+    const { handler, transport } = harness({ onError });
+    handler.onPathResolved(null);
+    handler.log('time_spent', 12);
+    transport.enqueue({
+      ok: true,
+      status: 200,
+      body: { accepted: 0, rejected: 1, errors: [{ index: 0, error: 'bad' }] },
+    });
+    handler.flushOnExit();
+    return new Promise<void>((resolve) => setTimeout(resolve, 0)).then(() => {
+      expect(onError).toHaveBeenCalledWith(GrovsError.eventDispatchFailed, expect.stringContaining('bad'));
+    });
   });
 });
 
@@ -556,22 +591,45 @@ describe('the path back-fill belongs to this visit', () => {
     expect(queue.all().filter((event) => event.path === 'campaign-a')).toHaveLength(1);
   });
 
-  // The boundary is the visit, not the handler. A second configure() builds a
+  // The boundary is the page, not the handler. A second configure() builds a
   // replacement whose queue is restored from the store the previous client
-  // wrote — those events are older than this handler and still this visit's.
-  it('stamps an event this session queued before the handler existed', () => {
-    const { handler, queue, clock, session } = harness();
+  // wrote — those events are older than this handler and still this page's,
+  // so they take this page's attribution.
+  it('stamps an event an earlier client on this page queued', () => {
+    const { handler, queue } = harness();
 
-    queue.add({
-      id: 'from-the-previous-client',
-      event: 'app_open',
-      createdAt: clock.now() - 60_000,
-      sessionId: session.currentSessionId(),
-    });
+    // Queued through the handler, as the earlier client would have done, and
+    // before any attribution was known.
+    handler.log('app_open');
+    expect(queue.all()[0]?.pathFinal).toBeUndefined();
 
     handler.onPathResolved('campaign-a');
 
     expect(queue.all()[0]?.path).toBe('campaign-a');
+  });
+
+  // A sibling tab shares the storage and the session, so it can hold an
+  // unsettled event of ours. It must not attribute it: both tabs would send
+  // the same event_id with different bodies, and the backend's hash covers
+  // the resolved link, so they land as two events under two campaigns.
+  it('leaves an event another tab queued for that tab to attribute', () => {
+    const direct = harness();
+    direct.handler.log('app_open');
+    const theirEvent = direct.queue.all()[0];
+    expect(theirEvent).toBeDefined();
+
+    // The campaign tab is its own page load, so its own bookkeeping. One
+    // module instance cannot hold two of those, so resetting here is what
+    // "a second tab" means in a unit test.
+    __resetPageAttribution();
+    const campaign = harness();
+    campaign.queue.add({ ...theirEvent! });
+    campaign.handler.onPathResolved('campaign-a');
+
+    // Untouched, and still unsettled: the tab that created it will settle it,
+    // and until then no copy of it can be sent with a campaign it never had.
+    expect(campaign.queue.all()[0]?.path).toBeUndefined();
+    expect(campaign.queue.all()[0]?.pathFinal).toBeUndefined();
   });
 });
 

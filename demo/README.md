@@ -33,11 +33,16 @@ attribution is only observable across one.
 
 ## Automated flows against a real backend
 
+Automated tests own a separate server on `http://localhost:4175`; add that
+exact origin to the project's linked domains and CORS configuration too.
+The interactive demo remains on port 5174. The test runner refuses to reuse
+an existing server so a stale SDK build cannot affect the result.
+
 `e2e/live.spec.ts` drives this page through every flow with no stubs:
 authenticate, create a link, read its details, arrive through the link and
 resolve the payload, deliver an event batch and assert the backend accepted
 it, set identity and attributes, sync screen aliases, list messages, read the
-unread count, log a purchase, deliver `time_spent` on tab close, and confirm a
+unread count, log a purchase, observe the `time_spent` request on an actual tab close, and confirm a
 returning visitor is recognised rather than counted as a new install.
 
 ```bash
@@ -50,9 +55,9 @@ GROVS_LIVE_TEST_ENV=false \
   npm run test:live
 ```
 
-Without `GROVS_LIVE_API_KEY` the suite skips rather than fails, so
-`npm run verify` stays green for anyone without credentials. Nothing is
-committed — the key only ever comes from the environment.
+Without `GROVS_LIVE_API_KEY`, an explicit live run fails with setup instructions.
+`npm run verify` runs only the local projects and does not need credentials.
+The key only ever comes from the environment.
 
 ### Running it continuously
 

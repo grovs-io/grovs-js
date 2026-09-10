@@ -13,6 +13,20 @@ async function requests(page: Page): Promise<RecordedRequest[]> {
   );
 }
 
+/**
+ * What an unload looks like from inside the page, in the order every engine
+ * fires it: pagehide, then visibilitychange to hidden. Playwright cannot
+ * observe a request from a page that is gone, so the page records it before
+ * the real unload; the real thing is covered by delivery.spec.ts.
+ */
+function simulateUnload(page: Page): Promise<void> {
+  return page.evaluate(() => {
+    window.dispatchEvent(new Event('pagehide'));
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+}
+
 async function configure(page: Page, url = '/demo/'): Promise<void> {
   await page.goto(url);
   await page.getByRole('button', { name: 'configure()' }).click();
@@ -111,6 +125,40 @@ test.describe('Grovs SDK end to end', () => {
     expect(fontRequests).toBe(0);
   });
 
+  // Tab pressed inside the message iframe never reaches the host document,
+  // so the trap has to be checked with real keyboard input, not synthesized
+  // events.
+  test('keeps keyboard focus inside a message modal', async ({ page }) => {
+    await page.route('https://example.com/**', (route) =>
+      route.fulfill({
+        contentType: 'text/html',
+        body: '<button id="in-frame">frame</button><a href="#">link</a>',
+      }),
+    );
+    await configure(page);
+    await page.getByRole('button', { name: 'showMessagesList()' }).click();
+    await page.locator('#Grovs-modal .grovs-item').first().click();
+    await expect(page.locator('#Grovs-page-modal-1')).toBeAttached();
+
+    const focusedIsInModal = () =>
+      page.evaluate(() => {
+        let element: Element | null = document.activeElement;
+        while (element?.shadowRoot?.activeElement) element = element.shadowRoot.activeElement;
+        const root = element?.getRootNode();
+        return root instanceof ShadowRoot && root.host.id === 'Grovs-page-modal-1';
+      });
+
+    expect(await focusedIsInModal()).toBe(true);
+    for (let i = 0; i < 8; i += 1) {
+      await page.keyboard.press('Tab');
+      expect(await focusedIsInModal()).toBe(true);
+    }
+    for (let i = 0; i < 8; i += 1) {
+      await page.keyboard.press('Shift+Tab');
+      expect(await focusedIsInModal()).toBe(true);
+    }
+  });
+
   // Flow 5: queued events survive going offline and drain when the network
   // returns, rather than being lost.
   test('drains the queue after reconnecting', async ({ page, context }) => {
@@ -165,9 +213,7 @@ test.describe('Grovs SDK end to end', () => {
     await configure(page);
     await page.waitForTimeout(1200);
 
-    // Playwright cannot observe a request from a page that is gone, so the
-    // page records it before unload completes.
-    await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+    await simulateUnload(page);
 
     const events = (await requests(page))
       .filter((r) => r.path === '/events/batch')
@@ -178,7 +224,7 @@ test.describe('Grovs SDK end to end', () => {
       );
 
     const timeSpent = events.find((e) => e['event'] === 'time_spent');
-    expect(timeSpent, 'no time_spent event was sent on pagehide').toBeTruthy();
+    expect(timeSpent, 'no time_spent event was sent on unload').toBeTruthy();
     expect(timeSpent?.['keepalive']).toBe(true);
     expect(Number(timeSpent?.['engagement_time'])).toBeGreaterThan(0);
   });
@@ -192,7 +238,7 @@ test.describe('Grovs SDK end to end', () => {
       await page.getByRole('button', { name: 'track() 9 KB props' }).click();
     }
     await page.waitForTimeout(1200);
-    await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+    await simulateUnload(page);
 
     const exitBatch = (await requests(page))
       .filter((r) => r.path === '/events/batch' && r.keepalive)
