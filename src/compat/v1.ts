@@ -1,12 +1,19 @@
 import { GrovsClient, type ClientDeps } from '../core/client';
 import { LinkGenerator } from '../links/links';
-import { MessagesService, type GrovsMessage } from '../messages/messages';
-import { MessagesUI } from '../messages/messages-ui';
-import { getDocument } from '../core/environment';
-import { Logger } from '../logging/logger';
+
+/** @deprecated The messages inbox was removed; in-app messages replace it. */
+export interface GrovsMessage {
+  id: number;
+  title: string;
+  subtitle: string;
+  read: boolean;
+  access_url: string;
+}
 
 type SuccessCallback<T> = (value: T) => void;
 type ErrorCallback = (error: string) => void;
+
+const IN_APP = 'in-app messages';
 
 const warned = new Set<string>();
 
@@ -69,8 +76,6 @@ export function __resetCoexistenceState(): void {
 export class GrovsV1 {
   private readonly client: GrovsClient;
   private readonly links: LinkGenerator;
-  private readonly messages: MessagesService;
-  private ui: MessagesUI | null = null;
 
   constructor(
     apiKey: string,
@@ -87,9 +92,6 @@ export class GrovsV1 {
       deps,
     );
     this.links = new LinkGenerator(this.client);
-    this.messages = new MessagesService(this.client);
-    // So a reset — this tab's or another's — closes the list this shim owns.
-    this.client.messagesUI = () => this.messagesUI();
     v1Constructed = true;
     warnCoexistence();
   }
@@ -139,42 +141,33 @@ export class GrovsV1 {
     return this.client.isAuthenticated();
   }
 
+  /** @deprecated The messages inbox was removed; in-app messages replace it. Does nothing. */
   showMessagesList(): void {
-    deprecate('showMessagesList', 'Grovs.showMessagesList()');
-    void this.messagesUI()?.showMessagesList();
+    deprecate('showMessagesList', IN_APP);
   }
 
-  /**
-   * v1 called `error` on a failed fetch. The v2 service returns [] for both
-   * "no messages" and "request failed", so the two are told apart here —
-   * calling `response([])` on a network error would silently break an
-   * integrator's retry logic or error UI.
-   */
+  /** @deprecated The messages inbox was removed; in-app messages replace it. Always responds with []. */
   async getMessages(
-    page: number,
-    response: SuccessCallback<GrovsMessage[]>,
-    error: ErrorCallback,
+    page?: number,
+    response?: SuccessCallback<GrovsMessage[]>,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    error?: ErrorCallback,
   ): Promise<void> {
-    deprecate('getMessages', 'Grovs.getMessages()');
-    const result = await this.messages.fetchMessages(page);
-    if (result === null) {
-      error('Grovs — could not fetch messages.');
-      return;
-    }
-    response(result);
+    deprecate('getMessages', IN_APP);
+    // The callback was never synchronous; keep it that way.
+    await Promise.resolve();
+    response?.([]);
   }
 
+  /** @deprecated The messages inbox was removed; in-app messages replace it. Always responds with 0. */
   async getNumberOfUnreadMessages(
-    response: SuccessCallback<number>,
-    error: ErrorCallback,
+    response?: SuccessCallback<number>,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    error?: ErrorCallback,
   ): Promise<void> {
-    deprecate('getNumberOfUnreadMessages', 'Grovs.numberOfUnreadMessages()');
-    const result = await this.messages.fetchUnreadCount();
-    if (result === null) {
-      error('Grovs — could not fetch the unread message count.');
-      return;
-    }
-    response(result);
+    deprecate('getNumberOfUnreadMessages', IN_APP);
+    await Promise.resolve();
+    response?.(0);
   }
 
   getAllReceivedData(): Record<string, unknown>[] {
@@ -182,21 +175,15 @@ export class GrovsV1 {
     return this.client.allReceivedPayloadsSinceStartup();
   }
 
+  /** @deprecated The messages inbox was removed; in-app messages replace it. Always responds with true. */
   async markMessageAsRead(
-    message: GrovsMessage,
-    response: SuccessCallback<boolean>,
-    error: ErrorCallback,
+    message?: GrovsMessage,
+    response?: SuccessCallback<boolean>,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    error?: ErrorCallback,
   ): Promise<void> {
-    deprecate('markMessageAsRead', 'Grovs.markMessageAsRead()');
-    const ok = await this.messages.markMessageAsRead(message.id);
-    if (ok) response(true);
-    else error('Grovs — could not mark the message as read.');
-  }
-
-  private messagesUI(): MessagesUI | null {
-    const doc = getDocument();
-    if (!doc) return null;
-    this.ui ??= new MessagesUI(doc, this.messages, new Logger());
-    return this.ui;
+    deprecate('markMessageAsRead', IN_APP);
+    await Promise.resolve();
+    response?.(true);
   }
 }

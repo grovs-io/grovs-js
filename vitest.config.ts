@@ -16,9 +16,8 @@ export default defineConfig({
       reporter: ['text', 'json-summary'],
       include: ['src/**/*.ts'],
       // contract/ is declarative data. index.ts is included: it is not purely
-      // delegating — showMessagesList and displayAutomaticMessages reach the
-      // DOM surface directly, which is how they once routed around the
-      // client's enabled guard with no test to notice.
+      // delegating, and once routed around the client's enabled guard with no
+      // test to notice.
       exclude: ['src/contract/**'],
       // Tiered rather than flat: a flat 85% can be met while leaving the
       // batching logic untested (spec Testing / Coverage gate).
@@ -31,7 +30,6 @@ export default defineConfig({
         'src/tracking/**': { lines: 90 },
         'src/compat/**': { lines: 85 },
         'src/logging/**': { lines: 90 },
-        'src/messages/**': { lines: 70 },
         'src/inapp/**': { lines: 90 },
         // A ratchet, not a target: the facade is mostly delegation, but it
         // once routed around the client's enabled guard, so it must not slip

@@ -3,10 +3,7 @@ import { GrovsClient } from '../src/core/client';
 import { PersistedQueue, QUEUE_STORAGE_KEY } from '../src/storage/persisted-queue';
 import { LinkGenerator } from '../src/links/links';
 import { PaymentEventsHandler } from '../src/events/payment-events-handler';
-import { MessagesService } from '../src/messages/messages';
-import { MessagesUI } from '../src/messages/messages-ui';
 import { FetchTransport } from '../src/net/fetch-transport';
-import { Logger } from '../src/logging/logger';
 import { GrovsError } from '../src/net/errors';
 import type { QueuedEvent } from '../src/events/event';
 import type { Transport, TransportRequest, TransportResponse } from '../src/net/transport';
@@ -286,25 +283,6 @@ describe('link results belong to the visitor that asked', () => {
   });
 });
 
-describe('a detached list does not take the detail modals with it', () => {
-  it('keeps a live detail modal when the host page swaps the body', async () => {
-    document.body.innerHTML = '';
-    const { client, transport } = await authed();
-    transport.fallback = { ok: true, status: 200, body: { notifications: [] } };
-    const ui = new MessagesUI(document, new MessagesService(client), new Logger());
-    await ui.showMessagesList();
-    ui.openPage({ id: 5, title: 'T', subtitle: '', read: false, access_url: 'https://x.com' });
-
-    // The host framework removes the list, not knowing the SDK owns it.
-    document.getElementById('Grovs-modal')?.remove();
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' }));
-
-    expect(document.getElementById('Grovs-page-modal-5')).not.toBeNull();
-    ui.close();
-    client.dispose();
-  });
-});
-
 describe('reset() means stopped, from every direction', () => {
   // The `online` listener now lives for the client's whole life, so it sees
   // states it did not before. Reconnecting is not a reason to start again.
@@ -570,30 +548,6 @@ describe('bounds on hostile or misconfigured input stay bounded', () => {
     expect(resolver.capture()).toBe('real-campaign');
     expect(storage.get(STORED_PATH_KEY)).toBe('real-campaign');
     expect(clock).toBeDefined();
-  });
-
-  it('caps how many messages automatic display can open at once', async () => {
-    document.body.innerHTML = '';
-    const { client, transport } = await authed();
-    transport.fallback = {
-      ok: true,
-      status: 200,
-      body: {
-        notifications: Array.from({ length: 40 }, (_, i) => ({
-          id: i + 1,
-          title: `M${i}`,
-          subtitle: '',
-          read: false,
-          access_url: 'https://x.com',
-        })),
-      },
-    };
-    const ui = new MessagesUI(document, new MessagesService(client), new Logger());
-    await ui.displayAutomaticMessages();
-
-    expect(document.querySelectorAll('.grovs-page-modal')).toHaveLength(5);
-    ui.close();
-    client.dispose();
   });
 
   it('caps the tombstone set so a long session cannot grow it without bound', () => {

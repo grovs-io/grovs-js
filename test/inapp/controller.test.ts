@@ -876,5 +876,89 @@ describe('InAppController', () => {
       h.timers.find((timer) => timer.ms === 60_000)?.run();
       expect(h.presenter.ids).toEqual(['c2']);
     });
+
+    it('shows a test message as it is, whatever its rules, and counts and reports nothing', async () => {
+      const h = harness();
+      const test = campaign({ id: 't1', triggers: [{ type: 'event', name: 'never' }], caps: { lifetime: 1 } });
+      await started(h, [], { test_messages: [test] });
+      expect(h.presenter.ids).toEqual(['t1']);
+      h.presenter.finish({ kind: 'clicked', buttonId: null, action: { type: 'close' } });
+      await settle();
+      expect(h.reports).toEqual([]);
+      const kept = JSON.parse(h.storage.get(IN_APP_STATE_KEY) ?? '{}') as { state: { views: unknown[] } };
+      expect(kept.state.views).toEqual([]);
+    });
+
+    it('shows a test message after the message that is on screen', async () => {
+      const h = harness();
+      await started(h, [campaign()]);
+      h.controller.onEvent(CART);
+      h.respond([campaign()], { test_messages: [campaign({ id: 't1' })], campaigns_changed_at: 'c2' });
+      h.controller.onForeground();
+      await settle();
+      expect(h.presenter.ids).toEqual(['c1']);
+      h.presenter.finish({ kind: 'dismissed', reason: 'close_button' });
+      await settle();
+      expect(h.presenter.ids).toEqual(['c1', 't1']);
+    });
+
+    it('keeps a test message that arrived while the page was hidden, and shows it on return', async () => {
+      const h = harness();
+      h.state.visible = false;
+      await started(h, [], { test_messages: [campaign({ id: 't1' })] });
+      expect(h.presenter.ids).toEqual([]);
+      h.state.visible = true;
+      h.state.response = { ok: true, body: { unchanged: true, server_time: iso(h.clock.now()) } };
+      h.controller.onForeground();
+      await settle();
+      expect(h.presenter.ids).toEqual(['t1']);
+    });
+
+    it('holds a test message while the host has paused messages or is on an excluded screen', async () => {
+      const h = harness();
+      h.controller.pause();
+      h.controller.setExcludedScreens(['checkout']);
+      h.controller.onEvent({ type: 'screen_view', name: 'Checkout' });
+      await started(h, [], { test_messages: [campaign({ id: 't1' })] });
+      h.controller.resume();
+      expect(h.presenter.ids).toEqual([]);
+      h.controller.onEvent({ type: 'screen_view', name: 'Home' });
+      expect(h.presenter.ids).toEqual(['t1']);
+    });
+
+    it('waits for the pictures of a test message with one timer at a time', async () => {
+      const h = harness();
+      h.state.images = false;
+      const picture = { content: { image: { portrait: 'https://cdn.example.com/t.png' } } };
+      await started(h, [], { test_messages: [campaign({ id: 't1', ...picture })] });
+      h.controller.onForeground();
+      h.controller.resume();
+      expect(h.timers.filter((timer) => timer.ms === 1000)).toHaveLength(1);
+    });
+
+    it('keeps a test that still waits when another arrives, and shows both', async () => {
+      const h = harness();
+      await started(h, [campaign()]);
+      h.controller.onEvent(CART);
+      for (const [id, stamp] of [['t1', 'c2'], ['t2', 'c3']] as const) {
+        h.respond([campaign()], { test_messages: [campaign({ id })], campaigns_changed_at: stamp });
+        h.controller.onForeground();
+        await settle();
+      }
+      for (let i = 0; i < 3; i += 1) {
+        h.presenter.finish({ kind: 'dismissed', reason: 'close_button' });
+        await settle();
+      }
+      expect(h.presenter.ids).toEqual(['c1', 't1', 't2']);
+    });
+
+    it('drops a test whose pictures never load and goes on to the next, which has its own tries', async () => {
+      const h = harness();
+      h.state.images = false;
+      const picture = { content: { image: { portrait: 'https://cdn.example.com/t.png' } } };
+      await started(h, [], { test_messages: [campaign({ id: 't1', ...picture }), campaign({ id: 't2' })] });
+      for (let i = 0; i < 10; i += 1) h.timers.filter((timer) => timer.ms === 1000)[i]?.run();
+      expect(h.presenter.ids).toEqual(['t2']);
+    });
   });
 });

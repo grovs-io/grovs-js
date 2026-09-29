@@ -59,22 +59,6 @@ describe('ApiService', () => {
     });
   });
 
-  it('fetches unread count over GET with no body', async () => {
-    const { api, transport } = makeService();
-    await api.numberOfUnreadMessages();
-    expect(transport.last?.method).toBe('GET');
-    expect(transport.last?.url).toBe(
-      'https://sdk.sqd.link/api/v1/sdk/number_of_unread_notifications',
-    );
-    expect(transport.last?.body).toBeUndefined();
-  });
-
-  it('marks a message read by id', async () => {
-    const { api, transport } = makeService();
-    await api.markMessageAsViewed(42);
-    expect(transport.last?.body).toEqual({ id: 42 });
-  });
-
   it('attaches auth headers to every request', async () => {
     const { api, transport } = makeService();
     await api.authenticate(DETAILS);

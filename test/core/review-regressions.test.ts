@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { scopedKey } from '../../src/storage/scoped-storage';
 import { GrovsClient, __resetPendingConsentStore } from '../../src/core/client';
-import { MessagesService } from '../../src/messages/messages';
 import { PersistedQueue } from '../../src/storage/persisted-queue';
 import { FakeTransport } from '../helpers/fake-transport';
 import type { TransportRequest, TransportResponse } from '../../src/net/transport';
@@ -21,61 +20,6 @@ function clearBrowserStorage(): void {
     if (name) document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/`;
   });
 }
-
-describe('messages respect consent, enabled and authentication', () => {
-  beforeEach(clearBrowserStorage);
-
-  // Config promises "nothing is persisted or transmitted until grantConsent()".
-  // The messages endpoints were the one public surface not checking.
-  it('sends no message request before consent is granted', async () => {
-    const transport = new FakeTransport();
-    const client = new GrovsClient(
-      { apiKey: 'k', requireConsent: true },
-      { transport, storage: new FakeStorage(), autoStartEvents: false },
-    );
-    await client.configure();
-
-    const messages = new MessagesService(client);
-    await messages.getMessages(1);
-    await messages.numberOfUnreadMessages();
-    await messages.markMessageAsRead(1);
-    await messages.messagesForAutomaticDisplay();
-
-    expect(transport.requests).toHaveLength(0);
-    client.shutdown();
-  });
-
-  // "Disabling stops the SDK, it does not merely mute it."
-  it('sends no message request after setEnabled(false)', async () => {
-    const transport = new FakeTransport();
-    transport.enqueue(AUTH_OK);
-    const client = new GrovsClient(
-      { apiKey: 'k' },
-      { transport, storage: new FakeStorage(), autoStartEvents: false },
-    );
-    await client.configure();
-    client.setEnabled(false);
-    transport.requests.length = 0;
-
-    await new MessagesService(client).getMessages(1);
-
-    expect(transport.requests).toHaveLength(0);
-  });
-
-  it('still works once authenticated and enabled', async () => {
-    const transport = new FakeTransport();
-    transport.enqueue(AUTH_OK);
-    const client = new GrovsClient(
-      { apiKey: 'k' },
-      { transport, storage: new FakeStorage(), autoStartEvents: false },
-    );
-    await client.configure();
-    transport.enqueue({ ok: true, status: 200, body: { number_of_unread_notifications: 3 } });
-
-    await expect(new MessagesService(client).numberOfUnreadMessages()).resolves.toBe(3);
-    client.shutdown();
-  });
-});
 
 describe('deep link attribution does not outlive its visit', () => {
   beforeEach(clearBrowserStorage);
@@ -486,21 +430,6 @@ describe('lifecycle changes invalidate work in flight', () => {
     expect(after?.['path']).toBeUndefined();
     client.shutdown();
   });
-
-  it('stops message traffic for a retired client', async () => {
-    const transport = new FakeTransport();
-    transport.enqueue(AUTH_OK);
-    const client = new GrovsClient(
-      { apiKey: 'k' },
-      { transport, storage: new FakeStorage(), autoStartEvents: false },
-    );
-    await client.configure();
-    client.dispose();
-    transport.requests.length = 0;
-
-    await new MessagesService(client).getMessages(1);
-    expect(transport.requests).toHaveLength(0);
-  });
 });
 
 describe('consent keeps what was tracked across a reconfigure', () => {
@@ -661,99 +590,6 @@ describe('a disabled SDK stays disabled', () => {
     client.setEnabled(true);
 
     await expect(client.grantConsent()).resolves.toBe(true);
-    client.shutdown();
-  });
-
-  // The list rendered whatever returned, even if the SDK stopped mid-request.
-  it('drops an ordinary message response that lands after disable', async () => {
-    const transport = new FakeTransport();
-    transport.enqueue(AUTH_OK);
-    const client = new GrovsClient(
-      { apiKey: 'k' },
-      { transport, storage: new FakeStorage(), autoStartEvents: false },
-    );
-    await client.configure();
-
-    transport.enqueue({
-      ok: true,
-      status: 200,
-      body: {
-        notifications: [
-          { id: 1, title: 'A', subtitle: '', read: false, access_url: 'https://example.com/m' },
-        ],
-      },
-    });
-
-    const service = new MessagesService(client);
-    const pending = service.getMessages(1);
-    client.setEnabled(false);
-
-    await expect(pending).resolves.toEqual([]);
-  });
-});
-
-describe('messages re-check after the await', () => {
-  beforeEach(clearBrowserStorage);
-
-  // The guard ran before the request. Disabling while it was in flight still
-  // popped modals onto a page that had asked the SDK to stop.
-  it('opens nothing when the SDK is disabled mid-request', async () => {
-    const transport = new FakeTransport();
-    transport.enqueue(AUTH_OK);
-    const client = new GrovsClient(
-      { apiKey: 'k' },
-      { transport, storage: new FakeStorage(), autoStartEvents: false },
-    );
-    await client.configure();
-
-    transport.enqueue({
-      ok: true,
-      status: 200,
-      body: {
-        notifications: [
-          { id: 1, title: 'A', subtitle: '', read: false, access_url: 'https://example.com/m' },
-        ],
-      },
-    });
-
-    const service = new MessagesService(client);
-    const pending = service.messagesForAutomaticDisplay();
-    client.setEnabled(false);
-
-    await expect(pending).resolves.toEqual([]);
-  });
-});
-
-describe('message iframe hardening', () => {
-  it('sandboxes remote content and rejects non-http schemes', async () => {
-    document.body.replaceChildren();
-    const transport = new FakeTransport();
-    transport.enqueue(AUTH_OK);
-    const client = new GrovsClient(
-      { apiKey: 'k' },
-      { transport, storage: new FakeStorage(), autoStartEvents: false },
-    );
-    await client.configure();
-
-    const { MessagesUI } = await import('../../src/messages/messages-ui');
-    const { Logger } = await import('../../src/logging/logger');
-    const ui = new MessagesUI(document, new MessagesService(client), new Logger());
-
-    ui.openPage({
-      id: 1,
-      title: 'T',
-      subtitle: '',
-      read: false,
-      access_url: 'javascript:alert(1)',
-    });
-
-    // The detail modal renders into a shadow root now; pierce it.
-    const frame = document
-      .getElementById('Grovs-page-modal-1')
-      ?.shadowRoot?.querySelector('iframe');
-    expect(frame?.getAttribute('sandbox')).toContain('allow-scripts');
-    expect(frame?.getAttribute('sandbox')).not.toContain('allow-same-origin');
-    expect(frame?.getAttribute('src')).toBe('about:blank');
     client.shutdown();
   });
 });
@@ -1210,46 +1046,6 @@ describe('an identity change made while stopped is delivered on re-enable', () =
     await tick();
 
     expect(transport.requestsTo('/visitor_attributes')).toHaveLength(2);
-    client.shutdown();
-  });
-});
-
-describe('a response belongs to the identity that asked for it', () => {
-  beforeEach(clearBrowserStorage);
-
-  // usable goes true again when the SDK re-authenticates, which is exactly the
-  // case where the response in flight belongs to the previous visitor.
-  it('drops messages fetched for a visitor the reset replaced', async () => {
-    const transport = new FakeTransport();
-    transport.enqueue(AUTH_OK);
-    const client = new GrovsClient(
-      { apiKey: 'k' },
-      { transport, storage: new FakeStorage(), autoStartEvents: false },
-    );
-    await client.configure();
-
-    const messages = new MessagesService(client);
-    let release = (): void => {};
-    const held = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const send = vi.spyOn(transport, 'send').mockImplementationOnce(async () => {
-      await held;
-      return {
-        ok: true,
-        status: 200,
-        body: { notifications: [{ id: 1, title: 'A', subtitle: 'B', read: false, access_url: 'u' }] },
-      };
-    });
-
-    const pending = messages.fetchMessages(1);
-    client.reset();
-    send.mockRestore();
-    transport.enqueue(AUTH_OK);
-    await client.configure();
-    release();
-
-    await expect(pending).resolves.toBeNull();
     client.shutdown();
   });
 });

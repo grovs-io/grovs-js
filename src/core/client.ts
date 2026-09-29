@@ -467,8 +467,6 @@ export class GrovsClient {
     // in the store the new visitor already owns.
     if (!wipeDurable) this.queue.discard();
     this.shutdown();
-    // The list on screen belongs to the visitor being cleared.
-    this.messagesUI?.()?.close();
     if (wipeDurable) {
       // The campaigns, views and counts belong to the visitor being cleared.
       this.inApp.clear();
@@ -654,11 +652,6 @@ export class GrovsClient {
     // sync is retried by the next configure() rather than dropped.
     if (this.aliasesDirty) void this.syncAliases();
 
-    // Automatic display is a console setting, so it has to happen without the
-    // integrator calling anything — that is what "automatic" means, and iOS
-    // ships it that way.
-    if (this.autoStartEvents) void this.displayAutomaticMessages();
-
     // After the deep link is resolved, not before: a link is why the visitor
     // came, and its lookup must not wait behind a campaign sync.
     if (this.autoStartEvents) {
@@ -670,19 +663,6 @@ export class GrovsClient {
     this.initComplete = true;
     return true;
   }
-
-  /** Opens every message the console flagged for automatic display. */
-  async displayAutomaticMessages(): Promise<void> {
-    if (!this.enabled) return;
-    const surface = this.messagesUI?.();
-    if (!surface) return;
-    await surface.displayAutomaticMessages();
-  }
-
-  /** Set by the facade, which owns the DOM surface. */
-  messagesUI:
-    | (() => { displayAutomaticMessages: () => Promise<void>; close: () => void } | null)
-    | null = null;
 
   /**
    * Emits the launch events and starts the flush timers.
@@ -1004,7 +984,7 @@ export class GrovsClient {
     return this.receivedPayloads[this.receivedPayloads.length - 1] ?? null;
   }
 
-  /** Exposed for links/ and messages/, which share the configured service. */
+  /** Exposed for links/, which shares the configured service. */
   get service(): ApiService {
     return this.api;
   }

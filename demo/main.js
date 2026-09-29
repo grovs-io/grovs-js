@@ -9,8 +9,6 @@ const stId = document.getElementById('st-id');
 const stCount = document.getElementById('st-count');
 
 let requestCount = 0;
-/** Mirrors the console's "display automatically" setting, off by default. */
-let autoDisplayEnabled = false;
 
 const SETTINGS_KEY = 'grovs_demo_settings';
 
@@ -133,33 +131,6 @@ function stubFor(path) {
       return { status: 200, body: { visitor: {} } };
     case '/screen_aliases':
       return { status: 200, body: { saved: 2 } };
-    case '/notifications_for_device':
-      return {
-        status: 200,
-        body: {
-          notifications: [
-            { id: 1, title: 'Welcome', subtitle: 'Thanks for trying Grovs', read: false, access_url: 'https://example.com/message' },
-            { id: 2, title: 'Release notes', subtitle: 'v2 is out', read: true, access_url: 'https://example.com/message' },
-          ],
-        },
-      };
-    // Automatic display is off in the console by default, and the SDK checks
-    // on every configure(). Answering with messages unconditionally would open
-    // a full-screen modal on every page load — which is what the real setting
-    // does, and why it is opt-in. The button below turns it on.
-    case '/notifications_to_display_automatically':
-      return {
-        status: 200,
-        body: {
-          notifications: autoDisplayEnabled
-            ? [{ id: 3, title: 'Automatic', subtitle: 'Opened without being asked', read: false, access_url: 'https://example.com/message' }]
-            : [],
-        },
-      };
-    case '/number_of_unread_notifications':
-      return { status: 200, body: { number_of_unread_notifications: 1 } };
-    case '/mark_notification_as_read':
-      return { status: 200, body: {} };
     // Not mounted unless GROVS_EE=true — the demo reproduces that, so the
     // Enterprise error path is visible here rather than only in production.
     case '/add_payment_event':
@@ -273,16 +244,6 @@ on('btn-payloads', () =>
   }),
 );
 
-on('btn-showMessages', async () => {
-  await Grovs.showMessagesList();
-  log('showMessagesList()');
-});
-on('btn-unread', async () => log('numberOfUnreadMessages() →', await Grovs.numberOfUnreadMessages()));
-on('btn-auto', async () => {
-  autoDisplayEnabled = true;
-  await Grovs.displayAutomaticMessages();
-  log('displayAutomaticMessages() — console setting simulated as on');
-});
 on('btn-purchase', async () =>
   log(
     'logCustomPurchase() →',

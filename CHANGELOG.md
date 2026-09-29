@@ -7,11 +7,30 @@
 - In-app messages: campaigns made in the dashboard are synced to the page, decided there and
   drawn in a shadow root. `Grovs.inApp` pauses, resumes, discards and excludes screens, and
   reports shown, clicked and dismissed messages to the host.
+- In-app test messages: a message sent with "Send test" in the dashboard shows at the next sync,
+  once the screen is free and messages are not paused. It is not counted or reported.
 - `GrovsError.inAppDisplayFailed` (5): a message could not be drawn.
 
 ### Changed
 
-- The bundle budget is 36 KB compressed, up from 24 KB, because in-app ships in the one file.
+- The bundle budget is 32 KB compressed, up from 24 KB, because in-app ships in the one file.
+
+### Deprecated
+
+- `Grovs.showMessagesList()` and `Grovs.displayAutomaticMessages()` do nothing,
+  `Grovs.getMessages()` resolves `[]`, `Grovs.numberOfUnreadMessages()` resolves `0` and
+  `Grovs.markMessageAsRead()` resolves `true`. None of them makes a request. Use in-app
+  messages instead.
+- The v1 `showMessagesList()` does nothing; `getMessages()`, `getNumberOfUnreadMessages()` and
+  `markMessageAsRead()` call their success callback with `[]`, `0` and `true`, and never the
+  error callback.
+- The `messagesTheme` option is accepted and ignored. The `MessagesTheme` and `GrovsMessage`
+  types remain for existing imports.
+
+### Removed
+
+- The messages inbox UI and automatic message display, with the four `notifications` endpoints
+  behind them. In-app messages replace both.
 
 ## 2.0.0 — 2026-09-10
 

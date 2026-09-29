@@ -118,8 +118,6 @@ before(async () => {
         answer = { data: linkPayload };
       } else if (path === '/data_for_device') {
         answer = { data: null };
-      } else if (path === '/notifications_to_display_automatically') {
-        answer = { notifications: [] };
       } else if (path === '/events/batch') {
         // Select the event, not whichever request wins the race with a tick
         // or the immediate launch batch. Arm these before tracking it.
@@ -208,9 +206,9 @@ test('consent prevents storage and HTTP; granting sends events queued in memory'
   assert.equal(received.length, 0);
   assert.equal(await run(() => window.Grovs.grantConsent()), true);
   await flush();
-  // Initialization also dispatches an automatic-message lookup. Observe it
-  // before reset so its late arrival is not mistaken for a new request.
-  await until(() => received.some((r) => r.path === '/notifications_to_display_automatically'), 'initial message lookup did not arrive');
+  // Initialization also dispatches an in-app sync. Observe it before reset
+  // so its late arrival is not mistaken for a new request.
+  await until(() => received.some((r) => r.path === '/in_app/sync'), 'initial in-app sync did not arrive');
   assert.equal(named('before_consent').length, 1);
   await run(() => window.Grovs.reset());
   const count = received.length;

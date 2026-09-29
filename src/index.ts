@@ -1,22 +1,15 @@
 import { GrovsClient } from './core/client';
 import { resolveConfig, type GrovsConfig } from './core/config';
 import { LinkGenerator } from './links/links';
-import { MessagesService, type GrovsMessage } from './messages/messages';
-import { MessagesUI } from './messages/messages-ui';
-import type { MessagesTheme } from './messages/messages-theme';
-import { getDocument } from './core/environment';
 import { Logger, type LogLevel } from './logging/logger';
 import type { CreateLinkParams } from './net/api';
-import { GrovsV1, noteFacadeConfigured } from './compat/v1';
+import { GrovsV1, noteFacadeConfigured, type GrovsMessage } from './compat/v1';
 import type { ScreenNameProvider } from './tracking/auto-screen-tracker';
 import type { CustomPurchase } from './events/payment-events-handler';
 import type { InAppCallbacks } from './inapp/controller';
 
 let client: GrovsClient | null = null;
 let links: LinkGenerator | null = null;
-let messages: MessagesService | null = null;
-let ui: MessagesUI | null = null;
-let messagesTheme: MessagesTheme | undefined;
 
 /**
  * In-app settings outlive a client: configure() builds a new one, and a host
@@ -43,13 +36,6 @@ function notConfigured(method: string): void {
   fallbackLogger.warn(`${method}() called before configure(); the call is a no-op.`);
 }
 
-function messagesUI(): MessagesUI | null {
-  const doc = getDocument();
-  if (!doc || !messages || !client) return null;
-  ui ??= new MessagesUI(doc, messages, client.log, messagesTheme);
-  return ui;
-}
-
 /**
  * The v2 facade. Mirrors the static shape of the iOS Grovs class so the two
  * SDKs read as one product.
@@ -65,20 +51,11 @@ const facade = {
     // cannot help here: a second call builds a *new* client, so without this
     // the previous one's flush interval, lifecycle listeners and History
     // patch stay live and everything is tracked twice.
-    // Close before disposing: the old modals keep the list id, which would
-    // stop the replacement's UI opening at all, and their rows still call
-    // into a client that is about to be retired.
-    ui?.close();
     client?.dispose();
 
     const next = new GrovsClient(config);
     client = next;
     links = new LinkGenerator(next);
-    messages = new MessagesService(next);
-    ui = null;
-    messagesTheme = config.messagesTheme;
-    // Automatic display needs the DOM surface, which lives here.
-    next.messagesUI = messagesUI;
     applyInAppSettings(next);
     return next.configure();
   },
@@ -115,9 +92,6 @@ const facade = {
 
   setEnabled(enabled: boolean): void {
     if (!client) return notConfigured('setEnabled');
-    // "Disabling stops the SDK, it does not merely mute it" — an open modal
-    // whose rows still open messages is the SDK still running.
-    if (!enabled) ui?.close();
     client.setEnabled(enabled);
   },
 
@@ -188,17 +162,9 @@ const facade = {
     return client.logCustomPurchase(purchase);
   },
 
-  /**
-   * Opens every message the console flagged for automatic display. Runs
-   * automatically after configure(); this is for triggering a re-check.
-   */
+  /** @deprecated The messages inbox was removed; in-app messages replace it. Does nothing. */
   displayAutomaticMessages(): Promise<void> {
-    const surface = messagesUI();
-    if (!surface) {
-      notConfigured('displayAutomaticMessages');
-      return Promise.resolve();
-    }
-    return surface.displayAutomaticMessages();
+    return Promise.resolve();
   },
 
   /**
@@ -216,9 +182,6 @@ const facade = {
   /** Clears stored identifiers, the session and the queued events. */
   reset(): void {
     if (!client) return notConfigured('reset');
-    // The open list belongs to the visitor being cleared: its rows still open
-    // that visitor's messages, and the iframe loads them without the SDK.
-    ui?.close();
     client.reset();
   },
 
@@ -239,37 +202,26 @@ const facade = {
     return client?.lastReceivedPayload() ?? null;
   },
 
+  /** @deprecated The messages inbox was removed; in-app messages replace it. Does nothing. */
   showMessagesList(): Promise<void> {
-    const surface = messagesUI();
-    if (!surface) {
-      notConfigured('showMessagesList');
-      return Promise.resolve();
-    }
-    return surface.showMessagesList();
+    return Promise.resolve();
   },
 
+  /** @deprecated The messages inbox was removed; in-app messages replace it. Always resolves []. */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   getMessages(page: number): Promise<GrovsMessage[]> {
-    if (!messages) {
-      notConfigured('getMessages');
-      return Promise.resolve([]);
-    }
-    return messages.getMessages(page);
+    return Promise.resolve([]);
   },
 
+  /** @deprecated The messages inbox was removed; in-app messages replace it. Always resolves 0. */
   numberOfUnreadMessages(): Promise<number> {
-    if (!messages) {
-      notConfigured('numberOfUnreadMessages');
-      return Promise.resolve(0);
-    }
-    return messages.numberOfUnreadMessages();
+    return Promise.resolve(0);
   },
 
+  /** @deprecated The messages inbox was removed; in-app messages replace it. Always resolves true. */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   markMessageAsRead(id: number): Promise<boolean> {
-    if (!messages) {
-      notConfigured('markMessageAsRead');
-      return Promise.resolve(false);
-    }
-    return messages.markMessageAsRead(id);
+    return Promise.resolve(true);
   },
 
   /**
@@ -343,8 +295,8 @@ export { GrovsError };
 export { SDK_VERSION };
 export type { GrovsConfig, DeeplinkCallback } from './core/config';
 export type { LogLevel, ErrorCallback } from './logging/logger';
-export type { GrovsMessage } from './messages/messages';
-export type { MessagesTheme } from './messages/messages-theme';
+export type { GrovsMessage } from './compat/v1';
+export type { MessagesTheme } from './core/config';
 export type { CreateLinkParams } from './net/api';
 export type { ScreenNameProvider, ScreenNameDecision } from './tracking/auto-screen-tracker';
 export type { CustomRedirects } from './net/api';

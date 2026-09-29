@@ -19,6 +19,7 @@ describe('public facade', () => {
     expect(typeof Grovs.getMessages).toBe('function');
     expect(typeof Grovs.numberOfUnreadMessages).toBe('function');
     expect(typeof Grovs.markMessageAsRead).toBe('function');
+    expect(typeof Grovs.displayAutomaticMessages).toBe('function');
     expect(typeof Grovs.allReceivedPayloadsSinceStartup).toBe('function');
     expect(typeof Grovs.lastReceivedPayload).toBe('function');
   });
@@ -54,7 +55,7 @@ describe('public facade', () => {
     expect(Grovs.userAttributes).toBeNull();
     await expect(Grovs.getMessages(1)).resolves.toEqual([]);
     await expect(Grovs.numberOfUnreadMessages()).resolves.toBe(0);
-    await expect(Grovs.markMessageAsRead(1)).resolves.toBe(false);
+    await expect(Grovs.markMessageAsRead(1)).resolves.toBe(true);
     await expect(Grovs.showMessagesList()).resolves.toBeUndefined();
   });
 
@@ -120,33 +121,6 @@ describe('public facade', () => {
     expect(bodies.some((body) => body.includes('from_client_a'))).toBe(true);
   });
 
-  // The open list belongs to the visitor being cleared: its rows still open
-  // that visitor's messages, and the iframe fetches them without the SDK.
-  it('closes an open messages list on reset and on disable', async () => {
-    document.body.innerHTML = '';
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(
-        async () =>
-          new Response(JSON.stringify({ linksquared: 'v-1', notifications: [] }), { status: 200 }),
-      ),
-    );
-
-    await Grovs.configure({ apiKey: 'k' });
-    await Grovs.showMessagesList();
-    expect(document.getElementById('Grovs-modal')).not.toBeNull();
-
-    Grovs.reset();
-    expect(document.getElementById('Grovs-modal')).toBeNull();
-
-    await Grovs.showMessagesList();
-    expect(document.getElementById('Grovs-modal')).not.toBeNull();
-
-    Grovs.setEnabled(false);
-    expect(document.getElementById('Grovs-modal')).toBeNull();
-    Grovs.setEnabled(true);
-  });
-
   // Spec T9. React strict mode and hot reload both configure twice; the
   // replacement's handler is new, so only shared dedup state can catch it.
   it('emits one screen view across a double configure', async () => {
@@ -207,6 +181,77 @@ describe('public facade', () => {
 
       expect(spy.mock.calls.some(([msg]) => String(msg).includes('one page'))).toBe(false);
       vi.restoreAllMocks();
+    });
+  });
+
+  describe('removed messages inbox', () => {
+    const INBOX_PATHS =
+      /notifications_for_device|number_of_unread_notifications|mark_notification_as_read|notifications_to_display_automatically/;
+
+    function stubFetch() {
+      const mock = vi.fn(
+        async () => new Response(JSON.stringify({ linksquared: 'v-1' }), { status: 200 }),
+      );
+      vi.stubGlobal('fetch', mock);
+      return mock;
+    }
+
+    function urls(mock: ReturnType<typeof stubFetch>): string[] {
+      return (mock.mock.calls as unknown[][]).map(([url]) =>
+        String(url instanceof Request ? url.url : url),
+      );
+    }
+
+    it('returns the empty values without a request', async () => {
+      document.body.innerHTML = '';
+      const fetchMock = stubFetch();
+      await Grovs.configure({ apiKey: 'k' });
+      expect(Grovs.isAuthenticated()).toBe(true);
+      await vi.waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(0));
+      fetchMock.mockClear();
+
+      await expect(Grovs.showMessagesList()).resolves.toBeUndefined();
+      await expect(Grovs.displayAutomaticMessages()).resolves.toBeUndefined();
+      await expect(Grovs.getMessages(1)).resolves.toEqual([]);
+      await expect(Grovs.numberOfUnreadMessages()).resolves.toBe(0);
+      await expect(Grovs.markMessageAsRead(7)).resolves.toBe(true);
+
+      expect(urls(fetchMock).filter((url) => INBOX_PATHS.test(url))).toEqual([]);
+      expect(document.getElementById('Grovs-modal')).toBeNull();
+      expect(document.querySelector('.grovs-page-modal')).toBeNull();
+    });
+
+    it('never calls an inbox endpoint after configure()', async () => {
+      const fetchMock = stubFetch();
+      await Grovs.configure({ apiKey: 'k' });
+      expect(Grovs.isAuthenticated()).toBe(true);
+      Grovs.track('something');
+      await Grovs.flush();
+      Grovs.reset();
+      await Grovs.configure({ apiKey: 'k' });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(urls(fetchMock).length).toBeGreaterThan(0);
+      expect(urls(fetchMock).filter((url) => INBOX_PATHS.test(url))).toEqual([]);
+    });
+
+    it('still accepts messagesTheme, silently', async () => {
+      stubFetch();
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      const onError = vi.fn();
+
+      await expect(
+        Grovs.configure({
+          apiKey: 'k',
+          onError,
+          messagesTheme: { mode: 'dark', position: 'right', title: 'Inbox', accentColor: '#f00', zIndex: 10 },
+        }),
+      ).resolves.toBe(true);
+
+      expect(warn).not.toHaveBeenCalled();
+      expect(error).not.toHaveBeenCalled();
+      expect(onError).not.toHaveBeenCalled();
     });
   });
 

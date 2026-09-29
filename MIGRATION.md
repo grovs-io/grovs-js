@@ -77,10 +77,14 @@ const link = await Grovs.generateLink({
 | `userIdentifier()`, `userAttributes()` | same signature, **corrected values** |
 | `authenticated()` | `isAuthenticated()` |
 | `getAllReceivedData()` | `allReceivedPayloadsSinceStartup()` |
-| `showMessagesList()` | unchanged |
-| `getMessages(page, ok, err)` | `getMessages(page)` → Promise |
-| `getNumberOfUnreadMessages(ok, err)` | `numberOfUnreadMessages()` → Promise |
-| `markMessageAsRead(msg, ok, err)` | `markMessageAsRead(id)` → Promise |
+| `showMessagesList()` | removed with the messages inbox; does nothing |
+| `getMessages(page, ok, err)` | removed; calls `ok([])` |
+| `getNumberOfUnreadMessages(ok, err)` | removed; calls `ok(0)` |
+| `markMessageAsRead(msg, ok, err)` | removed; calls `ok(true)` |
+
+The messages inbox was removed after 2.0.0; in-app messages replace it. The
+four methods above stay callable in both APIs, make no request and never call
+`err`. In v2 they resolve `[]`, `0` and `true`.
 
 ## What else changed in 2.0.0
 

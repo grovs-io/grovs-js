@@ -16,10 +16,9 @@ const FILE = 'dist/grovs.global.js';
 // in-app messages about 7 KB, at the cost of a second build output and a
 // loader that script-tag installs would need too.
 //
-// 36 KB, not 32: the old messages UI is still in the bundle beside its
-// replacement and the two together reach 32.3 KB. Lower this to 32 KB in the
-// change that removes src/messages.
-const BUDGET_BYTES = 36 * 1024;
+// Briefly 36 KB while the old messages UI shipped beside its replacement;
+// back to 32 KB now that src/messages is gone.
+const BUDGET_BYTES = 32 * 1024;
 
 try {
   statSync(FILE);

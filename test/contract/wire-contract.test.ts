@@ -214,28 +214,6 @@ describe('wire contract — request bodies', () => {
     });
   });
 
-  it('POST /notifications_for_device and /mark_notification_as_read', async () => {
-    const transport = new FakeTransport();
-    await service(transport).messagesForDevice(2);
-    expect(transport.last?.body).toEqual({ page: 2 });
-
-    await service(transport).markMessageAsViewed(7);
-    expect(transport.last?.body).toEqual({ id: 7 });
-  });
-
-  it('GET endpoints send no body', async () => {
-    const transport = new FakeTransport();
-    const api = service(transport);
-
-    await api.numberOfUnreadMessages();
-    expect(transport.last?.method).toBe('GET');
-    expect(transport.last?.body).toBeUndefined();
-
-    await api.messagesForAutomaticDisplay();
-    expect(transport.last?.method).toBe('GET');
-    expect(transport.last?.body).toBeUndefined();
-  });
-
   it('every request carries the same auth headers', async () => {
     const transport = new FakeTransport();
     const api = service(transport);
@@ -243,7 +221,6 @@ describe('wire contract — request bodies', () => {
     await api.authenticate(DETAILS);
     await api.createLink({ title: 'T' });
     await api.addEvents([]);
-    await api.numberOfUnreadMessages();
 
     for (const request of transport.requests) {
       expect(request.headers).toMatchObject({

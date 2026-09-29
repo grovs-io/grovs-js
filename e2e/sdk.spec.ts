@@ -88,80 +88,34 @@ test.describe('Grovs SDK end to end', () => {
     expect(screens).toContain('Product');
   });
 
-  // Flow 4: the modal must not leak styles into the host page, nor inherit
-  // them — the reason it moved into a shadow root.
-  test('renders the messages modal inside a shadow root', async ({ page }) => {
+  // Flow 4: the messages inbox was removed. Its methods stay callable for
+  // host pages that still use them, and none of them reaches the backend.
+  test('answers the removed inbox methods without a request', async ({ page }) => {
     await configure(page);
-    await page.getByRole('button', { name: 'showMessagesList()' }).click();
 
-    await expect(page.locator('#Grovs-modal')).toBeAttached();
-    // The modal mounts with skeletons and fills in when the fetch resolves,
-    // so waiting on the host alone counts rows that are not there yet.
-    // Playwright's locators pierce shadow roots, which is what makes this
-    // wait possible — and is exactly why the assertion below cannot use them.
-    await expect(page.locator('#Grovs-modal .grovs-item').first()).toBeAttached();
-
-    // Checked with the real DOM API a host page would use, not a locator:
-    // the claim is that the host document cannot see into the shadow root.
-    const visibility = await page.evaluate(() => ({
-      fromHostDocument: document.querySelectorAll('.grovs-item').length,
-      fromShadowRoot:
-        document.getElementById('Grovs-modal')?.shadowRoot?.querySelectorAll('.grovs-item')
-          .length ?? 0,
-    }));
-    expect(visibility).toEqual({ fromHostDocument: 0, fromShadowRoot: 2 });
-
-    // The other half of isolation: host CSS must not reach in. v1 injected
-    // raw markup into the page, so it inherited whatever the host had.
-    const styled = await page.evaluate(() => {
-      const style = document.createElement('style');
-      style.textContent = '.grovs-item { display: none !important; }';
-      document.head.appendChild(style);
-      const row = document
-        .getElementById('Grovs-modal')
-        ?.shadowRoot?.querySelector('.grovs-item') as HTMLElement | null;
-      return row ? getComputedStyle(row).display : 'missing';
+    const answers = await page.evaluate(async () => {
+      const sdk = (window as unknown as { Grovs: Record<string, (...args: unknown[]) => unknown> })
+        .Grovs;
+      return {
+        list: await sdk['showMessagesList']!(),
+        automatic: await sdk['displayAutomaticMessages']!(),
+        messages: await sdk['getMessages']!(1),
+        unread: await sdk['numberOfUnreadMessages']!(),
+        marked: await sdk['markMessageAsRead']!(1),
+      };
     });
-    expect(styled).toBe('flex');
+    expect(answers).toEqual({
+      list: undefined,
+      automatic: undefined,
+      messages: [],
+      unread: 0,
+      marked: true,
+    });
 
-    const fontRequests = await page.evaluate(
-      () => document.querySelectorAll('link[href*="fonts.googleapis.com"]').length,
-    );
-    expect(fontRequests).toBe(0);
-  });
-
-  // Tab pressed inside the message iframe never reaches the host document,
-  // so the trap has to be checked with real keyboard input, not synthesized
-  // events.
-  test('keeps keyboard focus inside a message modal', async ({ page }) => {
-    await page.route('https://example.com/**', (route) =>
-      route.fulfill({
-        contentType: 'text/html',
-        body: '<button id="in-frame">frame</button><a href="#">link</a>',
-      }),
-    );
-    await configure(page);
-    await page.getByRole('button', { name: 'showMessagesList()' }).click();
-    await page.locator('#Grovs-modal .grovs-item').first().click();
-    await expect(page.locator('#Grovs-page-modal-1')).toBeAttached();
-
-    const focusedIsInModal = () =>
-      page.evaluate(() => {
-        let element: Element | null = document.activeElement;
-        while (element?.shadowRoot?.activeElement) element = element.shadowRoot.activeElement;
-        const root = element?.getRootNode();
-        return root instanceof ShadowRoot && root.host.id === 'Grovs-page-modal-1';
-      });
-
-    expect(await focusedIsInModal()).toBe(true);
-    for (let i = 0; i < 8; i += 1) {
-      await page.keyboard.press('Tab');
-      expect(await focusedIsInModal()).toBe(true);
-    }
-    for (let i = 0; i < 8; i += 1) {
-      await page.keyboard.press('Shift+Tab');
-      expect(await focusedIsInModal()).toBe(true);
-    }
+    await expect(page.locator('#Grovs-modal, .grovs-page-modal')).toHaveCount(0);
+    const paths = (await requests(page)).map((r) => r.path);
+    expect(paths.length).toBeGreaterThan(0);
+    expect(paths.filter((path) => path.includes('notification'))).toEqual([]);
   });
 
   // Flow 5: queued events survive going offline and drain when the network

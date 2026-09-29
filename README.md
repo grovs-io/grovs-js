@@ -96,7 +96,7 @@ await Grovs.configure({
 | `requireConsent` | `false` | Store and send nothing until `grantConsent()` |
 | `appVersion` | SDK version | Your app's version, reported with the device fingerprint |
 | `debugLevel` | `"error"` | `"info"`, `"warn"` or `"error"` |
-| `messagesTheme` | built-in | Styling for the messages UI — see [Styling the messages UI](#styling-the-messages-ui) |
+| `messagesTheme` | — | Deprecated and ignored — see [Messages inbox (removed)](#messages-inbox-removed) |
 | `onDeeplink` | — | Called with the payload when opened from a link |
 | `onError` | — | Called on every SDK failure |
 
@@ -271,62 +271,21 @@ hard navigation:
 await Grovs.flush();
 ```
 
-## Messages
+## Messages inbox (removed)
 
-```javascript
-await Grovs.showMessagesList();
-const unread = await Grovs.numberOfUnreadMessages();
-const messages = await Grovs.getMessages(1);
-await Grovs.markMessageAsRead(messages[0].id);
-```
+The messages inbox and automatic message display were removed; in-app messages
+replace them. The methods remain as deprecated no-ops so existing pages keep
+working, and none of them makes a request:
 
-Messages flagged for automatic display in the console open on their own; call
-`Grovs.displayAutomaticMessages()` to trigger the check yourself. The messages
-UI renders inside a shadow root, so it neither inherits your CSS nor leaks its
-own.
+| Method | Now |
+| --- | --- |
+| `Grovs.showMessagesList()` | does nothing |
+| `Grovs.displayAutomaticMessages()` | does nothing |
+| `Grovs.getMessages(page)` | resolves `[]` |
+| `Grovs.numberOfUnreadMessages()` | resolves `0` |
+| `Grovs.markMessageAsRead(id)` | resolves `true` |
 
-### Styling the messages UI
-
-The built-in list and detail views take a theme, from JavaScript or from CSS:
-
-```ts
-Grovs.configure({
-  apiKey: '…',
-  messagesTheme: {
-    mode: 'auto',            // 'light' | 'dark' | 'auto'
-    position: 'center',      // or 'right' for a side sheet
-    title: 'Inbox',          // list header text (localization hook)
-    accentColor: '#e91e63',
-    borderRadius: '12px',
-  },
-});
-```
-
-```css
-/* or from CSS alone — this wins over the config object.
-   Target both hosts: the list modal and the per-message detail modals. */
-#Grovs-modal, .grovs-page-modal { --grovs-accent: #e91e63; --grovs-radius: 12px; }
-```
-
-Page CSS beats the config object, which beats the built-in defaults — set a
-`--grovs-*` property on the host elements in your stylesheet to override
-everything.
-
-| Theme token | CSS property | Light default | Dark default |
-| --- | --- | --- | --- |
-| `accentColor` | `--grovs-accent` | `#2563eb` | `#60a5fa` |
-| `backgroundColor` | `--grovs-bg` | `#ffffff` | `#1c1f24` |
-| `textColor` | `--grovs-text` | `#1a1d21` | `#e7e9ec` |
-| `mutedTextColor` | `--grovs-muted` | `#6b7280` | `#9aa2ad` |
-| `borderRadius` | `--grovs-radius` | `12px` | `12px` |
-| `fontFamily` | `--grovs-font` | system-ui stack | system-ui stack |
-| `backdropColor` | `--grovs-backdrop` | `rgba(0,0,0,.45)` | `rgba(0,0,0,.6)` |
-| `zIndex` | `--grovs-z` | `1000` | `1000` |
-
-`mode: 'auto'` follows `prefers-color-scheme`. Invalid values never break the
-modal: values that are not valid CSS (or that contain CSS delimiters) are
-rejected at `configure()` time with a warning and the defaults hold, and an
-invalid `mode`/`position` falls back with a warning.
+The `messagesTheme` option is still accepted and ignored.
 
 ## Purchases
 
@@ -491,12 +450,11 @@ npm run test:safari   # native installed Safari on macOS, local test server
 The demo runs stubbed by default — no backend needed — and can be switched to
 a real one. `npm run test:live` drives it through every flow against a live
 project: create a link, arrive through it, resolve the payload, deliver events
-and confirm the backend accepted them, messages, identity, purchases. See
+and confirm the backend accepted them, identity, purchases. See
 [demo/README.md](demo/README.md).
 
-The browser suite includes complete consent/message journeys, payload delivery
-on refresh, responses arriving after reset, automatic messages, and sandboxed
-message links opening a usable checkout window. These use controlled HTTP
+The browser suite includes a complete consent journey, payload delivery on
+refresh, and responses arriving after reset. These use controlled HTTP
 responses; `e2e/delivery.spec.ts` separately checks real HTTP receipt. They run
 in Chromium, WebKit and Firefox with no retries.
 They start a fresh server on port 4175, separate from the demo on port 5174,

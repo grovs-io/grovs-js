@@ -29,6 +29,12 @@ describe('resolveConfig', () => {
     expect(() => resolveConfig({ apiKey: '   ' })).toThrow(/API key/i);
   });
 
+  it('accepts the deprecated messagesTheme and ignores it', () => {
+    const plain = resolveConfig({ apiKey: 'k' });
+    const themed = resolveConfig({ apiKey: 'k', messagesTheme: { mode: 'dark', title: 'Inbox' } });
+    expect(themed).toEqual(plain);
+  });
+
   it('normalises absent callbacks to null', () => {
     const c = resolveConfig({ apiKey: 'k' });
     expect(c.onDeeplink).toBeNull();

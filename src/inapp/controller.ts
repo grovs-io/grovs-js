@@ -2,9 +2,10 @@ import type { Clock } from '../core/clock';
 import type { Logger } from '../logging/logger';
 import { GrovsError } from '../net/errors';
 import type { Storage } from '../storage/storage';
-import { readTimestamp } from './definition';
+import { readCampaign, readTimestamp } from './definition';
 import { Engine } from './engine';
 import { ImageCache, type ImageLoader } from './images';
+import { render } from './personalize';
 import { clear, emptyKept, emptySynced, loadKept, loadSynced, saveKept, saveSynced, type Kept, type Synced } from './store';
 import type { Action, Campaign, Decision, Device, EngineEvent, GlobalCaps, Rendered } from './types';
 
@@ -21,6 +22,7 @@ import type { Action, Campaign, Decision, Device, EngineEvent, GlobalCaps, Rende
 const SYNC_EVERY = 15 * 60_000;
 const OPEN_WAIT = 2_000;
 const JITTER = 10_000;
+const TEST_TRIES = 10;
 const FORGET_AFTER = 14 * 86_400_000;
 const FORMAT = 1;
 
@@ -119,6 +121,10 @@ export class InAppController {
   private landing: EngineEvent | null = null;
   /** True from the start of a session until its app_open has been taken. */
   private fresh = false;
+  /** Messages sent from the dashboard to look at; shown as they are, counted nowhere. */
+  private tests: unknown[] = [];
+  private testTries = 0;
+  private testTimer: unknown = null;
   /** Set when the store refused a write: memory is then newer than what is stored. */
   private unsaved = false;
   private delayed: { timer: unknown; priority: number } | null = null;
@@ -146,6 +152,7 @@ export class InAppController {
     this.generation += 1;
     this.cancelTimers();
     this.waiting = null;
+    this.tests = [];
     // Its answer belongs to the run that ended; a restart must send a request of its own.
     this.syncing = null;
     this.deps.presenter.dismiss();
@@ -280,7 +287,13 @@ export class InAppController {
     this.delayed = { timer, priority };
   }
 
+  /** Whenever the screen may have become free: what waited first, then a test sent from the dashboard. */
   private showWaiting(): void {
+    this.showHeld();
+    this.showTest();
+  }
+
+  private showHeld(): void {
     if (!this.active() || this.blocked() || !this.waiting) return;
     const { event, only } = this.waiting;
     this.waiting = null;
@@ -341,6 +354,63 @@ export class InAppController {
         if (!failed) this.settle(id, base, outcome);
         // A link takes the person away; what waits is shown when they are back, not as they leave.
         if (!(outcome.kind === 'clicked' && outcome.action.type === 'open_url')) this.showWaiting();
+      });
+  }
+
+  // MARK: Test messages
+
+  /** Each test has its own ten tries. */
+  private nextTest(): void {
+    this.tests = this.tests.slice(1);
+    this.testTries = 0;
+  }
+
+  private takeTests(body: unknown): void {
+    if (!isObject(body) || !Array.isArray(body.test_messages) || body.test_messages.length === 0) return;
+    // Added to what still waits: the server hands each test over once, so replacing would lose one.
+    this.tests = [...this.tests, ...(body.test_messages as unknown[])];
+    this.images.preload(this.tests);
+    this.showTest();
+  }
+
+  /**
+   * No trigger, condition or limit applies, no view is counted and nothing is reported. It still waits for a
+   * free screen, a visible page and a host that has not paused messages, and is tried again when they change.
+   */
+  private showTest(): void {
+    const raw = this.tests[0];
+    if (raw === undefined || !this.active() || this.blocked()) return;
+    if (!this.images.ready(raw)) {
+      if (this.testTimer !== null) return;
+      this.testTries += 1;
+      if (this.testTries > TEST_TRIES) {
+        this.deps.logger.warn('In-app test message dropped: its pictures did not load');
+        this.nextTest();
+        this.showTest();
+        return;
+      }
+      this.images.preload([raw]);
+      this.testTimer = this.timer(() => {
+        this.testTimer = null;
+        this.showTest();
+      }, 1000);
+      return;
+    }
+    this.nextTest();
+    const campaign = readCampaign(raw);
+    const filled = campaign ? render(campaign, { type: 'app_open' }, this.device().user) : null;
+    if (!campaign || !filled || !('rendered' in filled)) {
+      this.deps.logger.warn('In-app test message cannot be shown by this SDK');
+      return;
+    }
+    this.showing = campaign.id;
+    const generation = this.generation;
+    void this.present({ campaign, rendered: filled.rendered }, () => undefined)
+      .catch((error: unknown) => this.deps.logger.warn(`In-app test message could not be drawn: ${String(error)}`))
+      .then(() => {
+        this.showing = null;
+        if (generation !== this.generation) return;
+        this.showWaiting();
       });
   }
 
@@ -427,7 +497,9 @@ export class InAppController {
     const request = this.deps
       .sync(body)
       .then((result) => {
-        if (generation === this.generation && result.ok) this.apply(result.body, sent);
+        if (generation !== this.generation || !result.ok) return;
+        this.apply(result.body, sent);
+        this.takeTests(result.body);
       })
       .catch((error: unknown) => {
         this.deps.logger.warn(`In-app sync failed: ${String(error)}`);
@@ -585,6 +657,8 @@ export class InAppController {
     if (this.syncTimer !== null) this.cancel(this.syncTimer);
     if (this.periodic !== null) this.cancel(this.periodic);
     this.periodic = null;
+    if (this.testTimer !== null) this.cancel(this.testTimer);
+    this.testTimer = null;
     if (this.held) this.cancel(this.held.timer);
     if (this.delayed) this.cancel(this.delayed.timer);
     this.syncTimer = null;

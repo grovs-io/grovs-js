@@ -26,6 +26,25 @@ function make(overrides: Record<string, unknown> = {}) {
 }
 
 describe('GrovsClient.configure', () => {
+  it('never calls a messages inbox endpoint', async () => {
+    const { client, transport } = make();
+    transport.enqueue(AUTH_OK);
+    await expect(client.configure()).resolves.toBe(true);
+    expect(client.isAuthenticated()).toBe(true);
+    client.track('something');
+    await client.flush();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const inbox = transport.requests.filter((r) =>
+      /notifications_for_device|number_of_unread_notifications|mark_notification_as_read|notifications_to_display_automatically/.test(
+        r.url,
+      ),
+    );
+    expect(transport.requests.length).toBeGreaterThan(0);
+    expect(inbox).toEqual([]);
+    client.dispose();
+  });
+
   it('stores the linksquared id from the authenticate response', async () => {
     const { client, transport, storage } = make();
     transport.enqueue(AUTH_OK);

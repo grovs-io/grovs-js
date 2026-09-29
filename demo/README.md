@@ -41,8 +41,7 @@ an existing server so a stale SDK build cannot affect the result.
 `e2e/live.spec.ts` drives this page through every flow with no stubs:
 authenticate, create a link, read its details, arrive through the link and
 resolve the payload, deliver an event batch and assert the backend accepted
-it, set identity and attributes, sync screen aliases, list messages, read the
-unread count, log a purchase, observe the `time_spent` request on an actual tab close, and confirm a
+it, set identity and attributes, sync screen aliases, log a purchase, observe the `time_spent` request on an actual tab close, and confirm a
 returning visitor is recognised rather than counted as a new install.
 
 ```bash

@@ -1,5 +1,4 @@
 import type { ErrorCallback, LogLevel } from '../logging/logger';
-import type { MessagesTheme } from '../messages/messages-theme';
 import { SDK_VERSION } from '../version';
 
 export type DeeplinkCallback = (payload: Record<string, unknown>) => void;
@@ -10,6 +9,21 @@ const LOG_LEVELS = new Set<LogLevel>(['info', 'warn', 'error']);
 
 const DEFAULT_BASE_URL = 'https://sdk.sqd.link';
 const API_PATH = '/api/v1/sdk';
+
+/** @deprecated The messages inbox was removed; in-app messages replace it. */
+export interface MessagesTheme {
+  mode?: 'auto' | 'light' | 'dark';
+  position?: 'center' | 'right';
+  title?: string;
+  accentColor?: string;
+  backgroundColor?: string;
+  textColor?: string;
+  mutedTextColor?: string;
+  borderRadius?: string;
+  fontFamily?: string;
+  backdropColor?: string;
+  zIndex?: number;
+}
 
 export interface GrovsConfig {
   apiKey: string;
@@ -32,7 +46,7 @@ export interface GrovsConfig {
    *  the SDK version, since a web page has no build number of its own. */
   appVersion?: string;
   debugLevel?: LogLevel;
-  /** Styling for the built-in messages UI. See MessagesTheme. */
+  /** @deprecated Accepted and ignored: the messages inbox was removed; in-app messages replace it. */
   messagesTheme?: MessagesTheme;
   onDeeplink?: DeeplinkCallback;
   onError?: ErrorCallback;

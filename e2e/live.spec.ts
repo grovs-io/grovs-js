@@ -240,27 +240,6 @@ test.describe('live backend', () => {
       .toBe(200);
   });
 
-  test('lists messages and reads the unread count', async ({ page }) => {
-    await openLive(page);
-    await configure(page);
-
-    await page.getByRole('button', { name: 'numberOfUnreadMessages()' }).click();
-    await expect(page.locator('#log')).toContainText('numberOfUnreadMessages() →', {
-      timeout: 20_000,
-    });
-
-    const unread = callsTo(await requests(page), '/number_of_unread_notifications')[0];
-    expect(unread?.status).toBe(200);
-    expect(typeof unread?.response?.['number_of_unread_notifications']).toBe('number');
-
-    await page.getByRole('button', { name: 'showMessagesList()' }).click();
-    await expect
-      .poll(async () => callsTo(await requests(page), '/notifications_for_device')[0]?.status, {
-        timeout: 20_000,
-      })
-      .toBe(200);
-  });
-
   test('reports the Enterprise requirement for purchases, or accepts them', async ({ page }) => {
     await openLive(page);
     await configure(page);

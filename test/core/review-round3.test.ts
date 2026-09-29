@@ -229,19 +229,6 @@ describe('cross-tab reset, round 4', () => {
     client.dispose();
     localStorage.clear();
   });
-
-  it('closes the message list', async () => {
-    localStorage.clear();
-    const transport = new FakeTransport();
-    transport.enqueue(AUTH_OK).enqueue(PAYLOAD_NONE);
-    const client = new GrovsClient({ apiKey: 'k' }, { transport });
-    await client.configure();
-    const close = vi.fn();
-    client.messagesUI = () => ({ displayAutomaticMessages: () => Promise.resolve(), close });
-    window.dispatchEvent(removal());
-    expect(close).toHaveBeenCalled();
-    client.dispose();
-  });
 });
 
 describe('dispose() invalidates queued work', () => {

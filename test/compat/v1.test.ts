@@ -148,110 +148,82 @@ describe('GrovsV1 compatibility shim', () => {
     expect(sdk.userAttributes()).toEqual({ b: 2 });
   });
 
-  it('reports messages through the v1 callback shape', async () => {
-    const transport = new FakeTransport();
-    transport.enqueue(AUTH_OK).enqueue({ ok: true, status: 200, body: { data: null } });
-    const sdk = new GrovsV1('k', false, () => undefined, {
-      transport,
-      storage: new FakeStorage(),
+  describe('removed messages inbox', () => {
+    const MESSAGE = { id: 7, title: '', subtitle: '', read: false, access_url: '' };
+
+    async function started() {
+      const transport = new FakeTransport();
+      transport.enqueue(AUTH_OK).enqueue({ ok: true, status: 200, body: { data: null } });
+      const sdk = new GrovsV1('k', false, () => undefined, {
+        transport,
+        storage: new FakeStorage(),
+      });
+      await sdk.start();
+      transport.requests.length = 0;
+      // A failing backend must not reach the error callbacks either.
+      transport.fallback = { ok: false, status: 500, body: {} };
+      return { sdk, transport };
+    }
+
+    it('answers with the empty values and never calls error', async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const { sdk, transport } = await started();
+      const messages = vi.fn();
+      const count = vi.fn();
+      const marked = vi.fn();
+      const error = vi.fn();
+
+      await sdk.getMessages(1, messages, error);
+      await sdk.getNumberOfUnreadMessages(count, error);
+      await sdk.markMessageAsRead(MESSAGE, marked, error);
+
+      expect(messages.mock.calls).toEqual([[[]]]);
+      expect(count.mock.calls).toEqual([[0]]);
+      expect(marked.mock.calls).toEqual([[true]]);
+      expect(error).not.toHaveBeenCalled();
+      expect(transport.requests).toHaveLength(0);
     });
-    await sdk.start();
 
-    transport.enqueue({
-      ok: true,
-      status: 200,
-      body: { notifications: [{ id: 1, title: 'A', subtitle: '', read: false, access_url: 'u' }] },
+    it('does not throw when the callbacks are omitted', async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const { sdk, transport } = await started();
+      // v1 integrators are untyped JavaScript, where nothing forces the arguments.
+      const loose = sdk as unknown as Record<string, (...args: unknown[]) => Promise<void>>;
+
+      await expect(loose['getMessages']!()).resolves.toBeUndefined();
+      await expect(loose['getMessages']!(1)).resolves.toBeUndefined();
+      await expect(loose['getNumberOfUnreadMessages']!()).resolves.toBeUndefined();
+      await expect(loose['markMessageAsRead']!()).resolves.toBeUndefined();
+      await expect(loose['markMessageAsRead']!(MESSAGE)).resolves.toBeUndefined();
+      expect(transport.requests).toHaveLength(0);
     });
-    const response = vi.fn();
-    await sdk.getMessages(1, response, vi.fn());
-    expect(response).toHaveBeenCalledWith([
-      { id: 1, title: 'A', subtitle: '', read: false, access_url: 'u' },
-    ]);
 
-    transport.enqueue({ ok: true, status: 200, body: { number_of_unread_notifications: 3 } });
-    const countResponse = vi.fn();
-    await sdk.getNumberOfUnreadMessages(countResponse, vi.fn());
-    expect(countResponse).toHaveBeenCalledWith(3);
-  });
+    it('showMessagesList() opens nothing and sends nothing', async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      document.body.replaceChildren();
+      const { sdk, transport } = await started();
 
-  it('marks a message as read through the v1 callback shape', async () => {
-    const transport = new FakeTransport();
-    transport.enqueue(AUTH_OK).enqueue({ ok: true, status: 200, body: { data: null } });
-    const sdk = new GrovsV1('k', false, () => undefined, {
-      transport,
-      storage: new FakeStorage(),
+      expect(sdk.showMessagesList()).toBeUndefined();
+      await Promise.resolve();
+
+      expect(document.body.childElementCount).toBe(0);
+      expect(transport.requests).toHaveLength(0);
     });
-    await sdk.start();
 
-    transport.enqueue({ ok: true, status: 200, body: {} });
-    const ok = vi.fn();
-    const err = vi.fn();
-    await sdk.markMessageAsRead(
-      { id: 7, title: '', subtitle: '', read: false, access_url: '' },
-      ok,
-      err,
-    );
-    expect(ok).toHaveBeenCalledWith(true);
-    expect(err).not.toHaveBeenCalled();
-  });
+    it('works before start()', async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const transport = new FakeTransport();
+      const sdk = new GrovsV1('k', false, () => undefined, {
+        transport,
+        storage: new FakeStorage(),
+      });
+      const messages = vi.fn();
 
-  // The error callbacks v1 integrators wired to retry logic and error UI.
-  it('calls the error callback when message fetching fails', async () => {
-    const transport = new FakeTransport();
-    transport.enqueue(AUTH_OK).enqueue({ ok: true, status: 200, body: { data: null } });
-    const sdk = new GrovsV1('k', false, () => undefined, {
-      transport,
-      storage: new FakeStorage(),
+      await sdk.getMessages(1, messages, vi.fn());
+
+      expect(messages).toHaveBeenCalledWith([]);
+      expect(transport.requests).toHaveLength(0);
     });
-    await sdk.start();
-
-    transport.enqueueStatus(500, {});
-    const response = vi.fn();
-    const error = vi.fn();
-    await sdk.getMessages(1, response, error);
-
-    expect(response).not.toHaveBeenCalled();
-    expect(error).toHaveBeenCalledOnce();
-  });
-
-  it('calls the error callback when the unread count fails', async () => {
-    const transport = new FakeTransport();
-    transport.enqueue(AUTH_OK).enqueue({ ok: true, status: 200, body: { data: null } });
-    const sdk = new GrovsV1('k', false, () => undefined, {
-      transport,
-      storage: new FakeStorage(),
-    });
-    await sdk.start();
-
-    transport.enqueueStatus(500, {});
-    const response = vi.fn();
-    const error = vi.fn();
-    await sdk.getNumberOfUnreadMessages(response, error);
-
-    expect(response).not.toHaveBeenCalled();
-    expect(error).toHaveBeenCalledOnce();
-  });
-
-  it('calls the error callback when marking read fails', async () => {
-    const transport = new FakeTransport();
-    transport.enqueue(AUTH_OK).enqueue({ ok: true, status: 200, body: { data: null } });
-    const sdk = new GrovsV1('k', false, () => undefined, {
-      transport,
-      storage: new FakeStorage(),
-    });
-    await sdk.start();
-
-    transport.enqueueStatus(500, {});
-    const response = vi.fn();
-    const error = vi.fn();
-    await sdk.markMessageAsRead(
-      { id: 1, title: '', subtitle: '', read: false, access_url: '' },
-      response,
-      error,
-    );
-
-    expect(response).not.toHaveBeenCalled();
-    expect(error).toHaveBeenCalledOnce();
   });
 
   it('does not invoke the auth callback when authentication fails', async () => {
@@ -267,22 +239,6 @@ describe('GrovsV1 compatibility shim', () => {
 
     expect(onAuth).not.toHaveBeenCalled();
     expect(sdk.authenticated()).toBe(false);
-  });
-
-  it('opens the messages list through the v1 method', async () => {
-    document.body.replaceChildren();
-    const transport = new FakeTransport();
-    transport.enqueue(AUTH_OK).enqueue({ ok: true, status: 200, body: { data: null } });
-    const sdk = new GrovsV1('k', false, () => undefined, {
-      transport,
-      storage: new FakeStorage(),
-    });
-    await sdk.start();
-
-    transport.enqueue({ ok: true, status: 200, body: { notifications: [] } });
-    sdk.showMessagesList();
-
-    await vi.waitFor(() => expect(document.getElementById('Grovs-modal')).not.toBeNull());
   });
 
   it('returns received payloads through getAllReceivedData', async () => {

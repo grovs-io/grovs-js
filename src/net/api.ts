@@ -70,10 +70,6 @@ const PATHS = {
   dataForDeviceAndPath: '/data_for_device_and_path',
   createLink: '/create_link',
   attributes: '/visitor_attributes',
-  notifications: '/notifications_for_device',
-  markNotificationAsRead: '/mark_notification_as_read',
-  notificationsToDisplayAutomatically: '/notifications_to_display_automatically',
-  numberOfUnreadNotifications: '/number_of_unread_notifications',
   inAppSync: '/in_app/sync',
 } as const;
 
@@ -150,22 +146,6 @@ export class ApiService {
     return this.post(PATHS.attributes, body);
   }
 
-  messagesForDevice(page: number): Promise<TransportResponse> {
-    return this.post(PATHS.notifications, { page });
-  }
-
-  markMessageAsViewed(id: number): Promise<TransportResponse> {
-    return this.post(PATHS.markNotificationAsRead, { id });
-  }
-
-  messagesForAutomaticDisplay(): Promise<TransportResponse> {
-    return this.get(PATHS.notificationsToDisplayAutomatically);
-  }
-
-  numberOfUnreadMessages(): Promise<TransportResponse> {
-    return this.get(PATHS.numberOfUnreadNotifications);
-  }
-
   /** The campaigns this visitor is eligible for, or `unchanged` when the versions sent still hold. */
   inAppSync(body: Record<string, unknown>): Promise<TransportResponse> {
     return this.post(PATHS.inAppSync, body);
@@ -205,15 +185,6 @@ export class ApiService {
       url: this.config.endpoint + path,
       headers: this.headers(),
       body,
-      abandon: this.abandonRetries(),
-    });
-  }
-
-  private get(path: string): Promise<TransportResponse> {
-    return this.transport.send({
-      method: 'GET',
-      url: this.config.endpoint + path,
-      headers: this.headers(),
       abandon: this.abandonRetries(),
     });
   }

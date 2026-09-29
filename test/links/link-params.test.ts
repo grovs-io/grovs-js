@@ -1,13 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ApiService } from '../../src/net/api';
 import { LinkGenerator } from '../../src/links/links';
 import { PaymentEventsHandler } from '../../src/events/payment-events-handler';
-import { MessagesService } from '../../src/messages/messages';
-import { MessagesUI } from '../../src/messages/messages-ui';
 import { GrovsClient } from '../../src/core/client';
 import { resolveConfig } from '../../src/core/config';
 import { Context } from '../../src/core/context';
-import { Logger } from '../../src/logging/logger';
 import { GrovsError } from '../../src/net/errors';
 import { FakeTransport } from '../helpers/fake-transport';
 import { FakeStorage } from '../helpers/fake-storage';
@@ -296,74 +293,5 @@ describe('PaymentEventsHandler', () => {
 
     expect(ok).toBe(false);
     expect(transport.requestsTo('/add_payment_event')).toHaveLength(0);
-  });
-});
-
-describe('MessagesUI shadow isolation and automatic display', () => {
-  beforeEach(() => {
-    document.body.replaceChildren();
-  });
-
-  // v1 injected a raw HTML string into the host page, so host CSS leaked in
-  // and the modal's own styles leaked out.
-  it('renders into a shadow root, invisible to host-document queries', async () => {
-    const transport = new FakeTransport();
-    const client = await authedClient(transport);
-    transport.enqueue({
-      ok: true,
-      status: 200,
-      body: { notifications: [{ id: 1, title: 'A', subtitle: '', read: false, access_url: 'u' }] },
-    });
-
-    const ui = new MessagesUI(document, new MessagesService(client), new Logger());
-    await ui.showMessagesList();
-
-    expect(document.querySelectorAll('.grovs-item')).toHaveLength(0);
-    const root = document.getElementById('Grovs-modal')?.shadowRoot;
-    expect(root?.querySelectorAll('.grovs-item')).toHaveLength(1);
-  });
-
-  it('does not load a third-party font', async () => {
-    const transport = new FakeTransport();
-    const client = await authedClient(transport);
-    transport.enqueue({ ok: true, status: 200, body: { notifications: [] } });
-
-    const ui = new MessagesUI(document, new MessagesService(client), new Logger());
-    await ui.showMessagesList();
-
-    const root = document.getElementById('Grovs-modal')?.shadowRoot;
-    expect(root?.querySelector('link[href*="fonts.googleapis.com"]')).toBeNull();
-    expect(document.querySelector('link[href*="fonts.googleapis.com"]')).toBeNull();
-  });
-
-  // v1 implemented this and commented the body out.
-  it('opens each automatic-display message', async () => {
-    const transport = new FakeTransport();
-    const client = await authedClient(transport);
-    transport.enqueue({
-      ok: true,
-      status: 200,
-      body: {
-        notifications: [
-          { id: 1, title: 'Auto A', subtitle: '', read: false, access_url: 'https://a' },
-        ],
-      },
-    });
-
-    const ui = new MessagesUI(document, new MessagesService(client), new Logger());
-    await ui.displayAutomaticMessages();
-
-    expect(document.querySelector('.grovs-page-modal')).not.toBeNull();
-  });
-
-  it('opens nothing when there are no automatic messages', async () => {
-    const transport = new FakeTransport();
-    const client = await authedClient(transport);
-    transport.enqueue({ ok: true, status: 200, body: { notifications: [] } });
-
-    const ui = new MessagesUI(document, new MessagesService(client), new Logger());
-    await ui.displayAutomaticMessages();
-
-    expect(document.querySelector('.grovs-page-modal')).toBeNull();
   });
 });
