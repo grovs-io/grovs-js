@@ -8,6 +8,7 @@ describe('GrovsError', () => {
     expect(GrovsError.networkRequestFailed).toBe(2);
     expect(GrovsError.eventDispatchFailed).toBe(3);
     expect(GrovsError.linkGenerationFailed).toBe(4);
+    expect(GrovsError.inAppDisplayFailed).toBe(5);
   });
 
   it('names codes the way iOS describes them', () => {

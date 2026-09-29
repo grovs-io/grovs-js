@@ -46,6 +46,8 @@ export interface ResolvedConfig {
   autoTrackScreenViews: boolean;
   requireConsent: boolean;
   appVersion: string;
+  /** The version the site passed, or empty: in-app version conditions fail when the site names none. */
+  inAppVersion: string;
   debugLevel: LogLevel;
   onDeeplink: DeeplinkCallback | null;
   onError: ErrorCallback | null;
@@ -68,6 +70,7 @@ export function resolveConfig(input: GrovsConfig): ResolvedConfig {
     autoTrackScreenViews: input.autoTrackScreenViews ?? true,
     requireConsent: input.requireConsent ?? false,
     appVersion: input.appVersion?.trim() || SDK_VERSION,
+    inAppVersion: typeof input.appVersion === 'string' ? input.appVersion.trim() : '',
     debugLevel: LOG_LEVELS.has(input.debugLevel ?? 'error') ? (input.debugLevel ?? 'error') : 'error',
     onDeeplink: input.onDeeplink ?? null,
     onError: input.onError ?? null,

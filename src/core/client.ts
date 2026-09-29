@@ -36,6 +36,10 @@ import {
 import { resolveConfig, type GrovsConfig, type ResolvedConfig } from './config';
 import { Context } from './context';
 import { SDK_VERSION } from '../version';
+import { InAppController } from '../inapp/controller';
+import { IN_APP_KEY, IN_APP_STATE_KEY } from '../inapp/store';
+import { WebPresenter, isVisible, loadImage, webDevice } from '../inapp/web';
+import { randomUUID } from './uuid';
 
 export { IDENTITY_KEY as LINKSQUARED_STORAGE_KEY };
 const OPENS_KEY = 'grovs_opens';
@@ -53,6 +57,8 @@ const BULK_KEYS = [
   SESSION_ACTIVITY_KEY,
   QUEUE_STORAGE_KEY,
   STORED_PATH_KEY,
+  IN_APP_KEY,
+  IN_APP_STATE_KEY,
 ] as const;
 
 /**
@@ -134,12 +140,16 @@ export class GrovsClient {
   private readonly queue: PersistedQueue;
   private readonly events: EventsHandler;
   private readonly custom: CustomEventsHandler;
+  /** In-app messages: what is stored, when it syncs, what it shows. */
+  readonly inApp: InAppController;
   private readonly lifecycle: LifecycleTracker;
   private readonly aliases = new ScreenAliases();
   private readonly screens: AutoScreenTracker;
   private readonly autoStartEvents: boolean;
   private payments: PaymentEventsHandler | null = null;
   private pipelineStarted = false;
+  /** Set when this configure() emitted the launch events, so in-app sees one app_open per visit. */
+  private openedNow = false;
   /** An initialization that started but never finished — see setEnabled. */
   private initStarted = false;
   private initComplete = false;
@@ -301,6 +311,33 @@ export class GrovsClient {
       isEnabled: () => this.enabled,
       isActive: () => this.isActive(),
       canTransmit: () => this.canTransmit(),
+      onBatchResponse: (body) => this.inApp.onBatchResponse(body),
+    });
+    this.inApp = new InAppController({
+      storage: this.storage,
+      clock: this.clock,
+      logger: this.logger,
+      presenter: new WebPresenter(this.logger),
+      loadImage,
+      device: () => webDevice(this.config.inAppVersion, this.context.userAttributes),
+      sync: async (body) => {
+        const response = await this.api.inAppSync(body);
+        return { ok: response.ok, body: response.body };
+      },
+      // Queued like any event, under the id the engine gave the view: that id is how a sync confirms it.
+      report: (id, eventName, properties) =>
+        this.events.enqueue({
+          id,
+          eventName,
+          createdAt: this.clock.now(),
+          sessionId: this.session.currentSessionId(),
+          properties,
+        }),
+      newId: randomUUID,
+      sessionId: () => this.session.currentSessionId(),
+      canRun: () => this.enabled && !this.disposed && this.canTransmit(),
+      isVisible,
+      sdkVersion: SDK_VERSION,
     });
     this.custom = new CustomEventsHandler({
       events: this.events,
@@ -319,8 +356,10 @@ export class GrovsClient {
       onExit: () => this.queue.flushToStorage(),
       onForeground: () => {
         this.session.currentSessionId();
+        this.inApp.onForeground();
       },
       onHide: () => {
+        this.inApp.onBackground();
         // The keepalive batch first: it is what survives if this hide is the
         // start of a close, and every browser gives the hidden transition
         // more time than the pagehide. Then persist (spec A4): on mobile
@@ -431,6 +470,8 @@ export class GrovsClient {
     // The list on screen belongs to the visitor being cleared.
     this.messagesUI?.()?.close();
     if (wipeDurable) {
+      // The campaigns, views and counts belong to the visitor being cleared.
+      this.inApp.clear();
       this.queue.clear();
       this.session.reset();
       for (const key of BULK_KEYS) this.storage.remove(key);
@@ -618,6 +659,14 @@ export class GrovsClient {
     // ships it that way.
     if (this.autoStartEvents) void this.displayAutomaticMessages();
 
+    // After the deep link is resolved, not before: a link is why the visitor
+    // came, and its lookup must not wait behind a campaign sync.
+    if (this.autoStartEvents) {
+      this.inApp.start();
+      if (this.openedNow) this.inApp.onEvent({ type: 'app_open' });
+      this.openedNow = false;
+    }
+
     this.initComplete = true;
     return true;
   }
@@ -673,6 +722,7 @@ export class GrovsClient {
       opens: Number.isFinite(opens) ? opens : 1,
       lastStart: lastStart !== null && Number.isFinite(lastStart) ? lastStart : null,
     });
+    this.openedNow = true;
     this.lifecycle.start();
     if (this.config.autoTrackScreenViews) this.screens.start();
   }
@@ -684,7 +734,8 @@ export class GrovsClient {
     // An untyped caller passing the wrong shape gets a warning, not a throw
     // out of their own handler.
     try {
-      this.custom.track(name, properties, tags);
+      const tracked = this.custom.track(name, properties, tags);
+      if (tracked) this.inApp.onEvent({ type: 'event', ...tracked });
     } catch (error) {
       this.logger.warn(`track() ignored: ${String(error)}`);
     }
@@ -693,7 +744,8 @@ export class GrovsClient {
   trackScreenView(screenName: string, properties?: Record<string, unknown>): void {
     if (!this.enabled) return;
     try {
-      this.custom.trackScreenView(screenName, properties);
+      const tracked = this.custom.trackScreenView(screenName, properties);
+      if (tracked) this.inApp.onEvent({ type: 'screen_view', ...tracked });
     } catch (error) {
       this.logger.warn(`trackScreenView() ignored: ${String(error)}`);
     }
@@ -745,6 +797,8 @@ export class GrovsClient {
     // still writes its queue a second later, over whatever replaced it.
     this.queue.flushToStorage();
     this.events.stop();
+    // Closes what is on screen: a stopped SDK must not leave a message up that still reports clicks.
+    this.inApp.stop();
     this.lifecycle.stop();
     this.screens.stop();
     this.cancelAuthRetry();
@@ -920,6 +974,7 @@ export class GrovsClient {
         this.lifecycle.start();
         if (this.config.autoTrackScreenViews) this.screens.start();
         this.events.resume();
+        this.inApp.start();
         // Only configure() consumed this before, and the facade's configure()
         // builds a *new* client — so an identifier set while stopped sat in
         // the context until the next page load read the server value over it.

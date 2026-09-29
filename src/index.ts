@@ -10,12 +10,32 @@ import type { CreateLinkParams } from './net/api';
 import { GrovsV1, noteFacadeConfigured } from './compat/v1';
 import type { ScreenNameProvider } from './tracking/auto-screen-tracker';
 import type { CustomPurchase } from './events/payment-events-handler';
+import type { InAppCallbacks } from './inapp/controller';
 
 let client: GrovsClient | null = null;
 let links: LinkGenerator | null = null;
 let messages: MessagesService | null = null;
 let ui: MessagesUI | null = null;
 let messagesTheme: MessagesTheme | undefined;
+
+/**
+ * In-app settings outlive a client: configure() builds a new one, and a host
+ * that paused messages or excluded its checkout screen before that must not
+ * find them showing afterwards.
+ */
+const inAppSettings: { callbacks: InAppCallbacks; excluded: string[]; paused: boolean; debug: boolean } = {
+  callbacks: {},
+  excluded: [],
+  paused: false,
+  debug: false,
+};
+
+function applyInAppSettings(target: GrovsClient): void {
+  Object.assign(target.inApp.callbacks, inAppSettings.callbacks);
+  target.inApp.setExcludedScreens(inAppSettings.excluded);
+  target.inApp.debug = inAppSettings.debug;
+  if (inAppSettings.paused) target.inApp.pause();
+}
 
 const fallbackLogger = new Logger();
 
@@ -59,6 +79,7 @@ const facade = {
     messagesTheme = config.messagesTheme;
     // Automatic display needs the DOM surface, which lives here.
     next.messagesUI = messagesUI;
+    applyInAppSettings(next);
     return next.configure();
   },
 
@@ -251,6 +272,51 @@ const facade = {
     return messages.markMessageAsRead(id);
   },
 
+  /**
+   * In-app messages. Campaigns are created in the dashboard and shown by the
+   * SDK when their trigger fires; nothing here is needed for that to work.
+   * These calls let the host page hold messages back and react to them.
+   */
+  inApp: {
+    /** Holds messages back, for a checkout or a video. The newest highest priority one waits. */
+    pause(): void {
+      inAppSettings.paused = true;
+      client?.inApp.pause();
+    },
+
+    /** Lets messages show again, starting with the one that waited, if it still qualifies. */
+    resume(): void {
+      inAppSettings.paused = false;
+      client?.inApp.resume();
+    },
+
+    /** Drops the waiting message and stays paused; pass true to also close the one on screen. */
+    discard(dismiss = false): void {
+      inAppSettings.paused = true;
+      client?.inApp.discard(dismiss);
+    },
+
+    /** Screens, by the name given to trackScreenView, on which no message shows. Messages wait. */
+    setExcludedScreens(names: string[]): void {
+      inAppSettings.excluded = Array.isArray(names) ? names.filter((name) => typeof name === 'string') : [];
+      client?.inApp.setExcludedScreens(inAppSettings.excluded);
+    },
+
+    /** beforeShow can stop a message by returning false; the others report what happened. */
+    setCallbacks(callbacks: InAppCallbacks): void {
+      inAppSettings.callbacks = { ...callbacks };
+      if (!client) return;
+      for (const key of Object.keys(client.inApp.callbacks)) delete client.inApp.callbacks[key as keyof InAppCallbacks];
+      Object.assign(client.inApp.callbacks, inAppSettings.callbacks);
+    },
+
+    /** Logs, at info level, each campaign considered for an event and why it was skipped. */
+    setDebug(enabled: boolean): void {
+      inAppSettings.debug = enabled === true;
+      if (client) client.inApp.debug = inAppSettings.debug;
+    },
+  },
+
   /** The deprecated v1 class. `new Grovs.V1(key, testEnv, callback)`. */
   V1: GrovsV1,
 };
@@ -283,6 +349,7 @@ export type { CreateLinkParams } from './net/api';
 export type { ScreenNameProvider, ScreenNameDecision } from './tracking/auto-screen-tracker';
 export type { CustomRedirects } from './net/api';
 export type { CustomPurchase, TransactionType } from './events/payment-events-handler';
+export type { InAppCallbacks } from './inapp/controller';
 export { GrovsV1 };
 
 export default Grovs;

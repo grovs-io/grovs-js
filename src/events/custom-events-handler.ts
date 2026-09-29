@@ -1,4 +1,4 @@
-import { RESERVED_EVENT_NAMES } from '../contract/event-contract';
+import { IN_APP_EVENT_NAMES, RESERVED_EVENT_NAMES } from '../contract/event-contract';
 import type { Clock } from '../core/clock';
 import type { SessionManager } from '../core/session';
 import { randomUUID } from '../core/uuid';
@@ -23,6 +23,12 @@ export function __resetScreenDedup(): void {
   lastScreenAt = 0;
 }
 
+/** What was queued, as the in-app engine needs it. Null when the call was refused or deduplicated. */
+export interface Tracked {
+  name: string;
+  properties: Record<string, unknown>;
+}
+
 export interface CustomEventsDeps {
   events: EventsHandler;
   session: SessionManager;
@@ -43,35 +49,36 @@ export class CustomEventsHandler {
 
   constructor(private readonly deps: CustomEventsDeps) {}
 
-  track(name: string, properties?: Record<string, unknown>, tags?: string[]): void {
+  track(name: string, properties?: Record<string, unknown>, tags?: string[]): Tracked | null {
     const trimmed = name?.trim() ?? '';
 
     if (!trimmed) {
       this.deps.logger.warn('track() requires a non-empty event name; the call was ignored.');
-      return;
+      return null;
     }
 
     // The backend rejects these with a 400. Failing here, with the reason,
     // beats a rejection the integrator only sees in a dashboard that stays
     // empty.
-    if (RESERVED_EVENT_NAMES.has(trimmed)) {
+    if (RESERVED_EVENT_NAMES.has(trimmed) || IN_APP_EVENT_NAMES.has(trimmed)) {
       this.deps.logger.warn(
         `"${trimmed}" is a reserved system event name and cannot be used with track(). ` +
           'Choose a different name.',
       );
-      return;
+      return null;
     }
 
     if (trimmed === SCREEN_VIEW_EVENT) {
       this.deps.logger.warn(
         'Use trackScreenView() rather than track("screen_view") so the screen name is attached.',
       );
-      return;
+      return null;
     }
 
     // Bounded here, not only at send: one unbounded name could exceed the
     // queue's whole budget and cost the events queued before it.
-    this.enqueue(truncate(trimmed), properties, tags);
+    const queued = truncate(trimmed);
+    return { name: queued, properties: this.enqueue(queued, properties, tags) };
   }
 
   /**
@@ -82,14 +89,14 @@ export class CustomEventsHandler {
    * flooding the dashboard; it resets on session rotation, because the same
    * screen in a new session is a genuinely new view.
    */
-  trackScreenView(screenName: string, properties?: Record<string, unknown>): void {
+  trackScreenView(screenName: string, properties?: Record<string, unknown>): Tracked | null {
     // Bounded before it becomes context: an oversized name would otherwise
     // survive the 8 KB cap through the context fallback below and ride on
     // every later custom event, all of which the backend then rejects.
     const trimmed = truncate(screenName?.trim() ?? '');
     if (!trimmed) {
       this.deps.logger.warn('trackScreenView() requires a non-empty screen name.');
-      return;
+      return null;
     }
 
     if (this.deps.session.rotateIfIdle()) this.resetDedup();
@@ -99,14 +106,14 @@ export class CustomEventsHandler {
     this.currentScreenName = trimmed;
 
     const now = this.deps.clock.now();
-    if (lastScreenName === trimmed && now - lastScreenAt < SCREEN_DEDUP_MS) return;
+    if (lastScreenName === trimmed && now - lastScreenAt < SCREEN_DEDUP_MS) return null;
 
     lastScreenName = trimmed;
     lastScreenAt = now;
 
     // Passed separately, not spread in: a spread reads every value, and a
     // throwing getter must cost its key rather than the caller's call.
-    this.enqueue(SCREEN_VIEW_EVENT, properties, undefined, { screen_name: trimmed });
+    return { name: trimmed, properties: this.enqueue(SCREEN_VIEW_EVENT, properties, undefined, { screen_name: trimmed }) };
   }
 
   resetDedup(): void {
@@ -122,7 +129,7 @@ export class CustomEventsHandler {
     properties?: Record<string, unknown>,
     tags?: string[],
     extra?: Record<string, string>,
-  ): void {
+  ): Record<string, unknown> {
     // Sanitized before the merge, never after: merging means spreading, and a
     // spread reads every value.
     const base = sanitizeProperties(properties, this.deps.logger);
@@ -149,6 +156,7 @@ export class CustomEventsHandler {
     if (merged) event.tags = merged;
 
     this.deps.events.enqueue(event);
+    return sanitized ?? {};
   }
 
   /** Custom events carry the most recently viewed screen, matching iOS. */

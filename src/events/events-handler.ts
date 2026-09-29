@@ -100,6 +100,8 @@ export interface EventsHandlerDeps {
   /** False while consent is pending or withdrawn, and before authentication.
    *  Gates transmission only: consent mode keeps queueing what it cannot send. */
   canTransmit?: () => boolean;
+  /** Handed the body of every accepted batch: it carries the in-app change stamps. */
+  onBatchResponse?: (body: unknown) => void;
 }
 
 /**
@@ -580,6 +582,13 @@ export class EventsHandler {
     // failures — unknown event type, reserved event_name — and are permanent.
     // Retrying one is an infinite loop that also blocks every event behind it,
     // so rejected indices are dropped rather than retried.
+    try {
+      this.deps.onBatchResponse?.(response.body);
+    } catch (error) {
+      // Delivery is settled below whatever a listener does with the body.
+      this.deps.logger.warn(`Batch response listener threw; ignored: ${String(error)}`);
+    }
+
     const result = response.body as Partial<BatchResult> | null;
     const rejectedIndices = new Set((result?.errors ?? []).map((error) => error.index));
 

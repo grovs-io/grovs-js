@@ -9,7 +9,17 @@ const FILE = 'dist/grovs.global.js';
 // at 20 KB it had 237 B of headroom, so the next fix would have failed CI for
 // a reason unrelated to size. 24 KB restores a working margin and still
 // catches anything that grows the bundle by a fifth.
-const BUDGET_BYTES = 24 * 1024;
+//
+// Raised again, to 32 KB, for in-app messages: the engine, storage, sync and
+// the renderer for nine templates are about 11 KB. They ship in the one
+// bundle on purpose. Loading them on demand would spare sites that never use
+// in-app messages about 7 KB, at the cost of a second build output and a
+// loader that script-tag installs would need too.
+//
+// 36 KB, not 32: the old messages UI is still in the bundle beside its
+// replacement and the two together reach 32.3 KB. Lower this to 32 KB in the
+// change that removes src/messages.
+const BUDGET_BYTES = 36 * 1024;
 
 try {
   statSync(FILE);

@@ -74,6 +74,7 @@ const PATHS = {
   markNotificationAsRead: '/mark_notification_as_read',
   notificationsToDisplayAutomatically: '/notifications_to_display_automatically',
   numberOfUnreadNotifications: '/number_of_unread_notifications',
+  inAppSync: '/in_app/sync',
 } as const;
 
 export class ApiService {
@@ -163,6 +164,11 @@ export class ApiService {
 
   numberOfUnreadMessages(): Promise<TransportResponse> {
     return this.get(PATHS.numberOfUnreadNotifications);
+  }
+
+  /** The campaigns this visitor is eligible for, or `unchanged` when the versions sent still hold. */
+  inAppSync(body: Record<string, unknown>): Promise<TransportResponse> {
+    return this.post(PATHS.inAppSync, body);
   }
 
   /** Caps at 50 server-side; the caller chunks. `keepalive` is set for the

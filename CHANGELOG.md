@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- In-app messages: campaigns made in the dashboard are synced to the page, decided there and
+  drawn in a shadow root. `Grovs.inApp` pauses, resumes, discards and excludes screens, and
+  reports shown, clicked and dismissed messages to the host.
+- `GrovsError.inAppDisplayFailed` (5): a message could not be drawn.
+
+### Changed
+
+- The bundle budget is 36 KB compressed, up from 24 KB, because in-app ships in the one file.
+
 ## 2.0.0 — 2026-09-10
 
 A TypeScript rewrite, bringing the JS SDK to behavioural parity with the iOS

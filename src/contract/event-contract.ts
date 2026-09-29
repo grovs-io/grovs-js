@@ -24,6 +24,17 @@ export const RESERVED_EVENT_NAMES: ReadonlySet<string> = new Set([
   'user_referred',
 ]);
 
+/**
+ * Sent by the SDK itself when it shows an in-app message. The backend checks
+ * each against the campaign it names, but a host that tracked one by hand
+ * would still skew that campaign's report.
+ */
+export const IN_APP_EVENT_NAMES: ReadonlySet<string> = new Set([
+  'in_app_viewed',
+  'in_app_clicked',
+  'in_app_dismissed',
+]);
+
 /** From Grovs::Enrichment in the backend's app_constants.rb. */
 export const ENRICHMENT_LIMITS = {
   maxStringLength: 255,

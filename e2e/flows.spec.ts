@@ -57,6 +57,11 @@ class Backend {
         answer = { number_of_unread_notifications: this.notifications.filter((m) => !this.marked.has(m.id)).length };
         break;
       case '/mark_notification_as_read': this.marked.add(Number(body['id'])); answer = {}; break;
+      // These flows are about links and the message list; no in-app campaign takes part.
+      case '/in_app/sync':
+        answer = { campaigns_changed_at: 'c', user_changed_at: 'u', server_time: new Date().toISOString().replace(/\.\d+Z$/, 'Z'),
+          store_url: null, first_seen_at: null, global_caps: { session: 10, day: 10 }, campaigns: [], test_messages: [] };
+        break;
       default: throw new Error(`Unexpected SDK endpoint: ${path}`);
     }
     // Capture the old response before waiting: replacing fixture data must
