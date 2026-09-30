@@ -5,7 +5,7 @@ describe('shared in-app cases', () => {
   const cases = loadCases();
 
   it('holds the cases the backend published', () => {
-    expect(cases.length).toBeGreaterThanOrEqual(55);
+    expect(cases.length).toBeGreaterThanOrEqual(66);
   });
 
   for (const kase of cases) {

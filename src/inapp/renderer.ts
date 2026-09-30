@@ -1,6 +1,6 @@
 import type { Logger } from '../logging/logger';
-import type { Outcome, Presentation, Presenter } from './controller';
-import type { Action, Campaign } from './types';
+import type { Answered, Commented, Outcome, Presentation, Presenter } from './controller';
+import type { Action, Campaign, Question } from './types';
 
 /**
  * Draws one in-app message in a shadow root and reports what the visitor did.
@@ -15,6 +15,8 @@ const HOST_ID = 'grovs-in-app';
 const COLOR = /^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$/;
 const BANNERS: readonly string[] = ['header', 'footer'];
 const IMAGE_ONLY: readonly string[] = ['cover_image', 'interstitial_image', 'half_interstitial_image'];
+const COMMENT_MAX = 500;
+const THANKS_MS = 2_000;
 
 const CSS = `
 :host { all: initial; }
@@ -64,10 +66,32 @@ const CSS = `
 /* 20px of padding and half of the first line, less half the button: level with that line. */
 .clear .close { top: 18px; }
 .clear .close, .banner .close { background: rgba(0, 0, 0, 0.06); color: #555555; }
-.dark .title, .dark .message { color: #ffffff; }
+.question { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.question.choice { flex-direction: column; }
+.question .buttons { padding: 0; width: 100%; }
+.star, .pick { border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+.star { padding: 0 2px; font-size: 32px; line-height: 1; }
+.star::before { content: "\\2606"; }
+.stars:hover .star::before, .stars:focus-within .star::before { content: "\\2605"; }
+.stars .star:hover ~ .star::before, .stars:not(:hover) .star:focus ~ .star::before { content: "\\2606"; }
+.pick { border-radius: 10px; padding: 12px 16px; font-size: 15px; font-weight: 600; background: #e9eef5; color: #111111; overflow-wrap: anywhere; }
+.dark .pick { background: rgba(255, 255, 255, 0.16); color: #ffffff; }
+.input { width: 100%; min-height: 72px; border: 1px solid #8a9099; border-radius: 10px; padding: 10px; font: inherit;
+  font-size: 15px; resize: vertical; background: #ffffff; color: #111111; }
+.banner .star { font-size: 26px; }
+.banner .input { min-height: 44px; }
+.dark .title, .dark .message, .dark .question { color: #ffffff; }
 .dark.clear .close, .banner .dark .close { background: rgba(255, 255, 255, 0.16); color: #ffffff; }
 .banner .close { top: 50%; margin-top: -14px; }
-.button:focus-visible, .close:focus-visible, .tap:focus-visible { outline: 3px solid #ffbf47; outline-offset: 2px; }
+/* A banner with a question is several rows tall: its close button sits by the title and the rows run full width. */
+.banner .asks { flex-wrap: wrap; padding-right: 12px; }
+.banner .asks .body > :first-child { padding-right: 32px; }
+.banner .asks .close { top: 10px; margin-top: 0; }
+.banner .asks .question, .banner .asks .buttons { width: 100%; flex: 1 1 100%; }
+/* On a wide screen a banner's rows stop at a readable width, as a cover's do. */
+.banner .asks .question, .banner .asks .buttons, .banner .asks .prompt, .banner .asks .input { max-width: 640px; }
+.banner .asks .buttons .button { flex: 1 1 0; }
+.button:focus-visible, .close:focus-visible, .tap:focus-visible, .star:focus-visible, .pick:focus-visible, .input:focus-visible { outline: 3px solid #ffbf47; outline-offset: 2px; }
 .sentinel { position: fixed; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 @media (max-width: 600px) {
   .banner .card { flex-wrap: wrap; }
@@ -103,6 +127,8 @@ interface Open {
   finish: (outcome: Outcome) => void;
   restore: HTMLElement | null;
   cleanup: (() => void)[];
+  /** Set at the tap that answers the question. */
+  answer: { value: number | string; comment: string | null } | null;
 }
 
 export class InAppRenderer implements Presenter {
@@ -115,24 +141,30 @@ export class InAppRenderer implements Presenter {
     private readonly navigate: (url: string) => void,
   ) {}
 
-  present(presentation: Presentation, drawn: () => void = () => undefined): Promise<Outcome> {
+  present(
+    presentation: Presentation,
+    drawn: () => void = () => undefined,
+    answered: Answered = () => undefined,
+    commented: Commented = () => undefined,
+  ): Promise<Outcome> {
     this.dismiss();
     if (!this.doc.body) return Promise.reject(new Error('the page has no body'));
     return new Promise((resolve) => {
       const host = this.doc.createElement('div');
       host.id = HOST_ID;
       const root = host.attachShadow({ mode: 'open' });
-      const open: Open = { host, root, restore: this.active(), cleanup: [], finish: () => undefined };
+      const open: Open = { host, root, restore: this.active(), cleanup: [], answer: null, finish: () => undefined };
       let done = false;
       open.finish = (outcome) => {
         if (done) return;
         done = true;
         this.close(open);
-        resolve(outcome);
+        // Once the question is answered, every way of closing is an answer.
+        resolve(open.answer ? { kind: 'answered', ...open.answer } : outcome);
       };
       this.open = open;
       this.style(root);
-      this.draw(open, presentation);
+      this.draw(open, presentation, answered, commented);
       this.doc.body.appendChild(host);
       // Focus first: the host may close the message from onShown, and close() must find every listener to remove.
       this.focus(open, presentation.campaign);
@@ -150,7 +182,7 @@ export class InAppRenderer implements Presenter {
 
   // MARK: Drawing
 
-  private draw(open: Open, { campaign, rendered }: Presentation): void {
+  private draw(open: Open, { campaign, rendered }: Presentation, answered: Answered, commented: Commented): void {
     const { template } = campaign;
     const content = isObject(campaign.raw.content) ? campaign.raw.content : {};
     const colors = isObject(content.colors) ? content.colors : {};
@@ -166,6 +198,7 @@ export class InAppRenderer implements Presenter {
     if (background) card.style.background = background;
     // Text and the close button turn light by themselves, unless a colour was given for them.
     if (background && isDark(background)) card.classList.add('dark');
+    if (campaign.content.question) card.classList.add('asks');
 
     const image = template === 'alert' ? null : this.image(open, content);
     const tap = campaign.content.tapAction;
@@ -176,7 +209,9 @@ export class InAppRenderer implements Presenter {
 
     if (!IMAGE_ONLY.includes(template)) {
       const body = this.text(rendered.title, rendered.message, colors);
-      if (body) card.appendChild(body);
+      const { question } = campaign.content;
+      if (question) body.appendChild(this.question(open, body, question, answered, commented));
+      if (body.firstChild) card.appendChild(body);
       const buttons = this.buttons(open, campaign, rendered, content);
       if (buttons) card.appendChild(buttons);
     }
@@ -202,8 +237,7 @@ export class InAppRenderer implements Presenter {
     if (blocking) open.root.appendChild(this.sentinel(open, 'end'));
   }
 
-  private text(title: string | null, message: string | null, colors: Json): HTMLElement | null {
-    if (!title && !message) return null;
+  private text(title: string | null, message: string | null, colors: Json): HTMLElement {
     const body = this.element('div', 'body');
     if (title) {
       const heading = this.element('p', 'title');
@@ -220,6 +254,98 @@ export class InAppRenderer implements Presenter {
       body.appendChild(paragraph);
     }
     return body;
+  }
+
+  // MARK: Questions
+
+  private question(open: Open, body: HTMLElement, question: Question, answered: Answered, commented: Commented): HTMLElement {
+    const box = this.element('div', `question ${question.type}`);
+    const answer = (value: number | string): void => {
+      if (open.answer) return;
+      open.answer = { value, comment: null };
+      this.call(() => answered(value));
+      // Reporting the answer may have closed the message.
+      if (this.open !== open) return;
+      const { comment, thanks } = question;
+      const above = typeof value === 'number' && typeof comment?.split === 'number' && value > comment.split;
+      const prompt = above ? comment.high : comment?.low;
+      if (prompt) this.comment(open, body, box, prompt, thanks, commented);
+      else this.thank(open, body, thanks);
+    };
+    if (question.type === 'choice') {
+      for (const { id, text } of question.options) box.appendChild(this.button('pick', text, () => answer(id)));
+      return box;
+    }
+    box.setAttribute('role', 'group');
+    box.setAttribute('aria-label', 'Rating');
+    for (let value = 1; value <= 5; value += 1) {
+      const button = this.button('star', '', () => answer(value));
+      button.setAttribute('aria-label', `${value} of 5`);
+      box.appendChild(button);
+    }
+    return box;
+  }
+
+  private comment(open: Open, body: HTMLElement, box: HTMLElement, prompt: string, thanks: string | null, commented: Commented): void {
+    const label = this.element('p', 'message');
+    label.textContent = prompt;
+    const input = this.doc.createElement('textarea');
+    input.className = 'input';
+    // UTF-16 units, as the contract measures: what maxLength and slice() count.
+    input.maxLength = COMMENT_MAX;
+    input.setAttribute('aria-label', prompt);
+    const end = (text: string): void => {
+      const comment = text.trim().slice(0, COMMENT_MAX) || null;
+      if (open.answer) open.answer.comment = comment;
+      if (comment) this.call(() => commented(comment));
+      // Reporting the comment may have closed the message.
+      if (this.open !== open) return;
+      this.thank(open, body, thanks);
+    };
+    const row = this.element('div', 'buttons');
+    row.append(
+      this.button('button', 'Send', () => end(input.value)),
+      this.button('button', 'Skip', () => end('')),
+    );
+    box.className = 'question';
+    box.replaceChildren(label, input, row);
+    input.focus();
+  }
+
+  private thank(open: Open, body: HTMLElement, thanks: string | null): void {
+    const close = (): void => {
+      if (open.answer) open.finish({ kind: 'answered', ...open.answer });
+    };
+    if (!thanks) return close();
+    const line = this.element('p', 'message');
+    line.textContent = thanks;
+    line.setAttribute('role', 'status');
+    line.setAttribute('aria-live', 'polite');
+    line.tabIndex = -1;
+    body.replaceChildren(line);
+    // The button that held the focus is gone; focus on the thanks has it read out even where a
+    // live region inserted with its text already in it is not.
+    line.focus();
+    const timer = setTimeout(close, THANKS_MS);
+    open.cleanup.push(() => clearTimeout(timer));
+  }
+
+  /** A throwing callback must not leave the question stuck on screen. */
+  private call(run: () => void): void {
+    try {
+      run();
+    } catch (error) {
+      this.logger.warn(`In-app callback threw; ignored: ${String(error)}`);
+    }
+  }
+
+  private button(className: string, text: string, run: () => void): HTMLButtonElement {
+    const button = this.doc.createElement('button');
+    button.className = className;
+    button.type = 'button';
+    button.textContent = text;
+    button.addEventListener('click', run);
+    return button;
   }
 
   private buttons(open: Open, campaign: Campaign, rendered: Presentation['rendered'], content: Json): HTMLElement | null {
@@ -331,7 +457,7 @@ export class InAppRenderer implements Presenter {
   }
 
   private focusables(root: ShadowRoot): HTMLElement[] {
-    return Array.from(root.querySelectorAll<HTMLElement>('button, [tabindex]')).filter(
+    return Array.from(root.querySelectorAll<HTMLElement>('button, textarea, [tabindex]')).filter(
       (element) => !element.classList.contains('sentinel') && !element.classList.contains('card'),
     );
   }

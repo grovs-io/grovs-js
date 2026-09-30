@@ -10,6 +10,11 @@
 - In-app test messages: a message sent with "Send test" in the dashboard shows at the next sync,
   once the screen is free and messages are not paused. It is not counted or reported.
 - `GrovsError.inAppDisplayFailed` (5): a message could not be drawn.
+- In-app questions: a message can ask for a star rating or one choice from a list. One tap
+  answers, and the campaign is not shown again on that device. A comment box and
+  a closing thanks can follow. The host hears of it through `onAnswered(campaignId, value,
+  comment)`. `in_app_answered` and `in_app_commented` are now reserved event names, and an answer
+  can trigger another campaign.
 
 ### Changed
 

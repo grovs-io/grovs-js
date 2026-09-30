@@ -10,6 +10,7 @@ import type {
   Content,
   Filter,
   Operator,
+  Question,
   Schedule,
   Template,
   Trigger,
@@ -37,6 +38,8 @@ const TEMPLATES: readonly string[] = [
   'interstitial_image',
   'half_interstitial_image',
 ];
+/** Templates that draw no question: a question on one would have no way to be answered. */
+const NO_QUESTION: readonly string[] = ['alert', 'cover_image', 'interstitial_image', 'half_interstitial_image'];
 const ACTIONS: readonly string[] = ['close', 'open_url', 'key_value', 'request_push_permission', 'request_app_rating', 'open_store'];
 const VALUE_OPS: readonly string[] = ['eq', 'neq', 'gt', 'lt', 'contains', 'not_contains'];
 const ORDER_OPS: readonly string[] = ['eq', 'neq', 'gt', 'lt'];
@@ -102,6 +105,38 @@ function readButton(value: unknown): Button | null {
   return action ? { id: value.id, text: value.text, action } : null;
 }
 
+function readOption(value: unknown): Question['options'][number] | null {
+  return isObject(value) && isText(value.id) && isText(value.text) ? { id: value.id, text: value.text } : null;
+}
+
+function readLine(value: unknown): string | null | undefined {
+  if (value === null || value === undefined) return null;
+  return typeof value === 'string' ? value : undefined;
+}
+
+function readComment(value: unknown): Question['comment'] | undefined {
+  if (value === null || value === undefined) return null;
+  if (!isObject(value)) return undefined;
+  const { split = null } = value;
+  const low = readLine(value.low);
+  const high = readLine(value.high);
+  if ((split !== null && typeof split !== 'number') || low === undefined || high === undefined) return undefined;
+  return { split, low, high };
+}
+
+function readQuestion(value: unknown): Question | null {
+  if (!isObject(value) || !isText(value.id)) return null;
+  const { type } = value;
+  if (type !== 'stars' && type !== 'choice') return null;
+  const options = readList(value.options ?? [], readOption);
+  if (!options) return null;
+  if (type === 'choice' ? options.length < 2 || options.length > 5 : options.length > 0) return null;
+  const comment = readComment(value.comment);
+  const thanks = readLine(value.thanks);
+  if (comment === undefined || thanks === undefined) return null;
+  return { id: value.id, type, options, comment, thanks };
+}
+
 function readContent(value: unknown): Content | null {
   if (!isObject(value)) return null;
   const { title, message } = value;
@@ -113,9 +148,13 @@ function readContent(value: unknown): Content | null {
   if (typeof dismissible !== 'boolean') return null;
   const tapAction = tap === null || tap === undefined ? null : readAction(tap);
   if (tapAction === null && tap !== null && tap !== undefined) return null;
+  const asks = value.question !== null && value.question !== undefined;
+  const question = asks ? readQuestion(value.question) : null;
+  // The answer is the one thing to tap: a question comes with no button and no tap action.
+  if (asks && (!question || buttons.length > 0 || tapAction !== null)) return null;
   // A message nobody can dismiss must offer something to tap, or it would hold the screen for ever.
-  if (!dismissible && buttons.length === 0 && tapAction === null) return null;
-  return { title, message, buttons, tapAction, dismissible };
+  if (!dismissible && buttons.length === 0 && tapAction === null && !question) return null;
+  return { title, message, buttons, tapAction, dismissible, question };
 }
 
 function readComparison(value: Raw): Comparison | null {
@@ -255,6 +294,7 @@ export function readCampaign(value: unknown): Campaign | null {
   const schedule = readSchedule(value.schedule);
   if (createdAt === null || !content || !triggers || triggers.length === 0) return null;
   if (!conditions || !caps || !schedule) return null;
+  if (content.question && NO_QUESTION.includes(template)) return null;
   return {
     format,
     id,

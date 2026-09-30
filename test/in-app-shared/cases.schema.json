@@ -183,6 +183,7 @@
               "not_ready",
               "schedule",
               "condition",
+              "answered",
               "cap_session",
               "cap_day",
               "cap_week",
@@ -283,6 +284,19 @@
                   "type": "string"
                 }
               }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "answer"
+          ],
+          "properties": {
+            "answer": {
+              "type": "string",
+              "minLength": 1
             }
           }
         }

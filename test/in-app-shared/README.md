@@ -45,6 +45,7 @@ Merge rule: objects merge key by key, recursively. Arrays and scalars, including
 |---|---|
 | `session_start` | Starts a new session. Session counts reset; everything else is kept |
 | `sync` | Applies a sync response. See "Sync steps" |
+| `answer` | Records that the person answered the question of the campaign with that id |
 | `event` with `at` and `expect` | Tracks the event at that time and compares the result with `expect` |
 
 Every shown message is treated as closed before the next step, so the display queue plays no part. Each SDK tests its queue separately. The host app's veto is not part of the cases either: a vetoed campaign gains no view, and no other campaign is shown for that event.
@@ -89,17 +90,18 @@ An engine applies these in order for each campaign and reports the first that fa
 | 4 | `not_ready` | The campaign's images are not on the device |
 | 5 | `schedule` | `at` is before `start_at`, at or after `end_at`, or outside the days or hours |
 | 6 | `condition` | Any device condition fails, or the campaign asks for push permission that is already granted |
-| 7 | `cap_session` | Views of this campaign in this session have reached the cap |
-| 8 | `cap_day` | Views of this campaign on this local calendar day have reached the cap |
-| 9 | `cap_week` | Views of this campaign in this local week, Monday to Sunday, have reached the cap |
-| 10 | `cap_lifetime` | Views of this campaign on this device have reached the cap |
-| 11 | `cap_global_session` | Views of all counted campaigns in this session have reached the global cap |
-| 12 | `cap_global_day` | Views of all counted campaigns on this device on this local calendar day have reached the global cap |
-| 13 | `personalization` | A field has no value and no fallback |
-| 14 | `unsafe_link` | A link has no scheme, a forbidden scheme, or a field in its scheme or host |
-| 15 | `lower_priority` | Another passing campaign has a higher priority, or the same priority and an earlier `created_at`, or both the same and a smaller id |
+| 7 | `answered` | The campaign asks a question and the person has answered it on this device |
+| 8 | `cap_session` | Views of this campaign in this session have reached the cap |
+| 9 | `cap_day` | Views of this campaign on this local calendar day have reached the cap |
+| 10 | `cap_week` | Views of this campaign in this local week, Monday to Sunday, have reached the cap |
+| 11 | `cap_lifetime` | Views of this campaign on this device have reached the cap |
+| 12 | `cap_global_session` | Views of all counted campaigns in this session have reached the global cap |
+| 13 | `cap_global_day` | Views of all counted campaigns on this device on this local calendar day have reached the global cap |
+| 14 | `personalization` | A field has no value and no fallback |
+| 15 | `unsafe_link` | A link has no scheme, a forbidden scheme, or a field in its scheme or host |
+| 16 | `lower_priority` | Another passing campaign has a higher priority, or the same priority and an earlier `created_at`, or both the same and a smaller id |
 
-A campaign with `caps.ignore_global` skips checks 11 and 12, and its views are not counted by them.
+A campaign with `caps.ignore_global` skips checks 12 and 13, and its views are not counted by them.
 
 `created_at` values compare as instants, so `…00Z` is earlier than `…00.500Z`. Ids hold only ASCII letters, digits, `_` and `-`, and compare character by character, so `B` comes before `a`.
 
@@ -201,6 +203,38 @@ These are the display's work, not the engine's. The cases pin only what the engi
 | Leaving the app | After a tap that opens a link or the store, a waiting message is shown when the person is back, not as they leave |
 | Alert | An alert with no button always has Close, because the system alert has no tap action |
 | Device state | The user's attributes and the push permission are read again before every decision, not only at a sync |
+
+## Questions
+
+A campaign may ask one question, in `content.question`. The title and message are the question's wording; the question itself holds only what can be answered.
+
+| Field | Meaning |
+|---|---|
+| `id` | Names the question in what is reported |
+| `type` | `stars`, 1 to 5; `choice`, one of `options` |
+| `options` | For `choice`, 2 to 5 options, each with an `id` and a `text`. Empty for `stars` |
+| `comment` | Null, or what to ask after the answer. With `split` set, 1 to 4 and for `stars` only, an answer at or below it is asked `low` and one above it `high`. With `split` null, every answer is asked `low`. A null text asks nothing |
+| `thanks` | Null, or what to say last |
+| `review_from` | For `stars`: null, or the lowest answer that is followed by the system's own review prompt |
+
+An engine decides a campaign with a question as any other. These are the display's work:
+
+| Rule | Detail |
+|---|---|
+| Shape | A question comes with no buttons and no tap action; a campaign that has both is unsupported. A question on `alert`, `cover_image`, `interstitial_image` or `half_interstitial_image` is unsupported too: those draw no question |
+| Answering | One tap on a star or an option is the answer. It is reported at once as `in_app_answered`, before anything else is asked |
+| Once | The campaign is recorded as answered on the device and is not shown again: reason `answered`. The server leaves it out for the person's other devices, and refuses a second answer from the same person |
+| Comment | If `comment` asks something for that answer, a text box follows, with Send and Skip, of at most 500 UTF-16 units (what JavaScript's `length` and Swift's `utf16.count` give). Send reports `in_app_commented` at once, before any thanks is shown; Skip and closing report nothing more |
+| Thanks | If `thanks` is set it is shown for two seconds, then the message closes |
+| Review | For `stars` at or above `review_from`, the store's own review prompt is asked for once the message has closed, and nothing waiting is shown until the prompt has had its turn: `SKStoreReviewController` on iOS, the Play In-App Review API on Android. The web has none and skips this step and nothing else |
+| A way out | A question counts as something to tap, so a message that cannot be dismissed may hold one |
+| Not answered | Closing the message before answering is a dismissal, reported as one, and the campaign may be shown again within its limits |
+| Follow-up | An answer is also an event on the device, named `in_app_answered`, with `campaign_id`, `question_id`, `type` and `value`. Another campaign may use it as its trigger, with filters on those properties |
+
+| Event | Properties, besides `campaign_id` and `revision` |
+|---|---|
+| `in_app_answered` | `question_id`, `type`, `value`: a number for `stars`, the option's id for `choice` |
+| `in_app_commented` | `question_id`, `type`, `value`, `comment` |
 
 ## Limits the backend enforces
 

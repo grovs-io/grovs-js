@@ -144,14 +144,42 @@ describe('in-app wiring', () => {
     expect(names).toContain('in_app_dismissed');
   });
 
+  it('reports an answer and its comment as events, and tells the host', async () => {
+    const { client, transport } = make();
+    const comment = { split: null, low: 'Why?', high: null };
+    const question = { id: 'q1', type: 'stars', options: [], comment, thanks: null, review_from: null };
+    transport.campaigns = [merge(BASE, { content: { question } })];
+    await client.configure();
+    await settle();
+    const answered: unknown[] = [];
+    client.inApp.callbacks.onAnswered = (...all) => answered.push(all);
+
+    client.track('cart_viewed');
+    shown()?.querySelector<HTMLButtonElement>('[aria-label="4 of 5"]')?.click();
+    const input = shown()?.querySelector('textarea');
+    if (input) input.value = 'Quick';
+    shown()?.querySelectorAll<HTMLButtonElement>('.button')[0]?.click();
+    await settle();
+    await client.flush();
+
+    const sent = (name: string): unknown => transport.events().find((event) => event['event_name'] === name)?.['properties'];
+    const answer = { campaign_id: 'c1', revision: 1, question_id: 'q1', type: 'stars', value: 4 };
+    expect(sent('in_app_answered')).toMatchObject(answer);
+    expect(sent('in_app_commented')).toMatchObject({ ...answer, comment: 'Quick' });
+    expect(answered).toEqual([['c1', 4, 'Quick']]);
+    client.track('cart_viewed');
+    expect(shown()).toBeNull();
+  });
+
   it('a host cannot track the reserved in-app names itself', async () => {
     const { client, transport } = make();
     await client.configure();
     await settle();
-    // The backend accepts these three names from the SDK; track() is for the host's own events.
-    client.track('in_app_viewed', { campaign_id: 'c1' });
+    // The backend accepts these names from the SDK; track() is for the host's own events.
+    const names = ['in_app_viewed', 'in_app_clicked', 'in_app_dismissed', 'in_app_answered', 'in_app_commented'];
+    for (const name of names) client.track(name, { campaign_id: 'c1' });
     await client.flush();
-    expect(transport.events().some((event) => event['event_name'] === 'in_app_viewed')).toBe(false);
+    expect(transport.events().filter((event) => names.includes(String(event['event_name'])))).toEqual([]);
   });
 
   it('syncs again when an event batch response shows the campaigns changed', async () => {

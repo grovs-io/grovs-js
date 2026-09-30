@@ -1,6 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Logger } from '../../src/logging/logger';
-import { InAppController, type Outcome, type Presentation, type SyncResult } from '../../src/inapp/controller';
+import {
+  InAppController,
+  type Answered,
+  type Commented,
+  type Outcome,
+  type Presentation,
+  type SyncResult,
+} from '../../src/inapp/controller';
 import { IN_APP_KEY, IN_APP_STATE_KEY } from '../../src/inapp/store';
 import type { EngineEvent } from '../../src/inapp/types';
 import { FakeClock } from '../helpers/fake-clock';
@@ -31,9 +38,15 @@ class FakePresenter {
     return this.gone;
   }
 
-  present(presentation: Presentation, drawn: () => void): Promise<Outcome> {
+  /** Stands for the tap that answers the question of the message on screen, and for Send after it. */
+  answer: (value: number | string) => void = () => undefined;
+  comment: (text: string) => void = () => undefined;
+
+  present(presentation: Presentation, drawn: () => void, answered: Answered, commented: Commented): Promise<Outcome> {
     if (this.fail) return Promise.reject(new Error('no DOM'));
     this.shown.push(presentation);
+    this.answer = answered;
+    this.comment = commented;
     this.gone = false;
     return new Promise((resolve) => {
       this.settle = resolve;
@@ -61,6 +74,7 @@ interface Harness {
   presenter: FakePresenter;
   storage: FakeStorage;
   clock: FakeClock;
+  logger: Logger;
   reports: { id: string; name: string; properties: Json }[];
   syncs: Json[];
   /** Every timer but the fifteen minute sync, which every sync sets. */
@@ -144,7 +158,7 @@ function harness(storage = new FakeStorage(), clock = new FakeClock(START)): Har
       },
     };
   };
-  return { controller, presenter, storage, clock, reports, syncs, timers, periodic, errors, state, respond };
+  return { controller, presenter, storage, clock, logger, reports, syncs, timers, periodic, errors, state, respond };
 }
 
 /** Lets the promise chains inside the controller run. */
@@ -959,6 +973,205 @@ describe('InAppController', () => {
       await started(h, [], { test_messages: [campaign({ id: 't1', ...picture }), campaign({ id: 't2' })] });
       for (let i = 0; i < 10; i += 1) h.timers.filter((timer) => timer.ms === 1000)[i]?.run();
       expect(h.presenter.ids).toEqual(['t2']);
+    });
+  });
+  describe('questions', () => {
+    const QUESTION = { id: 'q1', type: 'stars', options: [], comment: null, thanks: null, review_from: null };
+    const asking = (changes: Json = {}): Json => campaign(merge({ content: { question: QUESTION }, revision: 3 }, changes));
+    const stored = (h: Harness): string[] | undefined =>
+      (JSON.parse(h.storage.get(IN_APP_STATE_KEY) ?? '{}') as { state: { answered?: string[] } }).state.answered;
+
+    it('reports the answer at the tap, before the message has closed', async () => {
+      const h = harness();
+      await started(h, [asking()]);
+      const answered: unknown[] = [];
+      h.controller.callbacks.onAnswered = (...all) => answered.push(all);
+      h.controller.onEvent(CART);
+      expect(h.presenter.shown[0]?.campaign.content.question).toMatchObject({ id: 'q1', type: 'stars' });
+
+      h.presenter.answer(4);
+      expect(h.reports.map((r) => r.name)).toEqual(['in_app_viewed', 'in_app_answered']);
+      expect(h.reports[1]).toEqual({
+        id: 'id2',
+        name: 'in_app_answered',
+        properties: { campaign_id: 'c1', revision: 3, question_id: 'q1', type: 'stars', value: 4 },
+      });
+      expect(stored(h)).toEqual(['c1']);
+      expect(answered).toEqual([]);
+
+      h.presenter.finish({ kind: 'answered', value: 4, comment: null });
+      await settle();
+      expect(h.reports.map((r) => r.name)).toEqual(['in_app_viewed', 'in_app_answered']);
+      expect(answered).toEqual([['c1', 4, null]]);
+    });
+
+    it('reports the option of a choice by its id', async () => {
+      const h = harness();
+      const options = [
+        { id: 'search', text: 'Search' },
+        { id: 'friend', text: 'A friend' },
+      ];
+      await started(h, [asking({ content: { question: { type: 'choice', options } } })]);
+      h.controller.onEvent(CART);
+      h.presenter.answer('friend');
+      expect(h.reports[1]?.properties).toMatchObject({ question_id: 'q1', type: 'choice', value: 'friend' });
+    });
+
+    it('reports a comment at Send, before the message has closed, and not again when it does', async () => {
+      const h = harness();
+      await started(h, [asking({ id: 'a', triggers: [{ type: 'event', name: 'a' }] }), asking({ id: 'b', triggers: [{ type: 'event', name: 'b' }] })]);
+      const answered: unknown[] = [];
+      const dismissed: unknown[] = [];
+      h.controller.callbacks.onAnswered = (...all) => answered.push(all);
+      h.controller.callbacks.onDismissed = (...all) => dismissed.push(all);
+      h.controller.callbacks.onClicked = (...all) => dismissed.push(all);
+
+      h.controller.onEvent({ type: 'event', name: 'a' });
+      h.presenter.answer(2);
+      h.presenter.comment('Too slow');
+      expect(h.reports.map((r) => r.name)).toEqual(['in_app_viewed', 'in_app_answered', 'in_app_commented']);
+      expect(h.reports[2]?.properties).toEqual({
+        campaign_id: 'a',
+        revision: 3,
+        question_id: 'q1',
+        type: 'stars',
+        value: 2,
+        comment: 'Too slow',
+      });
+      expect(answered).toEqual([]);
+      h.presenter.finish({ kind: 'answered', value: 2, comment: 'Too slow' });
+      await settle();
+      expect(h.reports.map((r) => r.name)).toEqual(['in_app_viewed', 'in_app_answered', 'in_app_commented']);
+
+      h.controller.onEvent({ type: 'event', name: 'b' });
+      h.presenter.answer(5);
+      h.presenter.finish({ kind: 'answered', value: 5, comment: null });
+      await settle();
+      expect(h.reports.slice(3).map((r) => r.name)).toEqual(['in_app_viewed', 'in_app_answered']);
+      expect(answered).toEqual([
+        ['a', 2, 'Too slow'],
+        ['b', 5, null],
+      ]);
+      expect(dismissed).toEqual([]);
+    });
+
+    it('reports no comment before an answer', async () => {
+      const h = harness();
+      await started(h, [asking()]);
+      h.controller.onEvent(CART);
+      h.presenter.comment('Stray');
+      expect(h.reports.map((r) => r.name)).toEqual(['in_app_viewed']);
+    });
+
+    it('shows a campaign whose stored answers are not a list of ids', async () => {
+      for (const answered of ['c1', 5, { c1: true }, ['c1', 2]]) {
+        const h = harness();
+        h.storage.set(
+          IN_APP_STATE_KEY,
+          JSON.stringify({ sessionId: 's1', state: { views: [], session: [], counts: {}, syncedAt: START, answered } }),
+        );
+        await started(h, [asking()]);
+        h.controller.onEvent(CART);
+        expect(h.presenter.ids, JSON.stringify(answered)).toEqual(['c1']);
+        expect(stored(h)).toEqual([]);
+      }
+    });
+
+    it('a question closed before it was answered is a dismissal, and is asked again', async () => {
+      const h = harness();
+      await started(h, [asking()]);
+      const answered: unknown[] = [];
+      h.controller.callbacks.onAnswered = (...all) => answered.push(all);
+      h.controller.onEvent(CART);
+      h.presenter.finish({ kind: 'dismissed', reason: 'close_button' });
+      await settle();
+      expect(h.reports.map((r) => r.name)).toEqual(['in_app_viewed', 'in_app_dismissed']);
+      expect(answered).toEqual([]);
+      h.controller.onEvent(CART);
+      expect(h.presenter.ids).toEqual(['c1', 'c1']);
+    });
+
+    it('does not ask again after an answer, nor after a restart from what is stored', async () => {
+      const h = harness();
+      await started(h, [asking()]);
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+      h.controller.debug = true;
+      h.logger.setLevel('info');
+      h.controller.onEvent(CART);
+      h.presenter.answer(5);
+      h.presenter.finish({ kind: 'answered', value: 5, comment: null });
+      await settle();
+
+      h.controller.onEvent(CART);
+      expect(h.presenter.ids).toEqual(['c1']);
+      expect(info.mock.lastCall?.[0]).toContain('Skipped c1: answered');
+
+      const restarted = harness(h.storage);
+      restarted.state.session = 's2';
+      await started(restarted, [asking()]);
+      restarted.controller.onEvent(CART);
+      expect(restarted.presenter.ids).toEqual([]);
+    });
+
+    it('keeps the answer when a sync replaced the engine while the message was on screen', async () => {
+      const h = harness();
+      await started(h, [asking()]);
+      h.controller.onEvent(CART);
+      h.respond([asking()], { campaigns_changed_at: 'c2' });
+      h.controller.onForeground();
+      await settle();
+      h.presenter.answer(5);
+      h.presenter.finish({ kind: 'answered', value: 5, comment: null });
+      await settle();
+      expect(stored(h)).toEqual(['c1']);
+      h.controller.onEvent(CART);
+      expect(h.presenter.ids).toEqual(['c1']);
+    });
+
+    it('shows a campaign triggered by the answer once the first has closed', async () => {
+      const h = harness();
+      const onAnswer = (id: string, op: string): Json =>
+        campaign({
+          id,
+          triggers: [
+            {
+              type: 'event',
+              name: 'in_app_answered',
+              filters: [
+                { field: 'campaign_id', op: 'eq', value: 'c1' },
+                { field: 'question_id', op: 'eq', value: 'q1' },
+                { field: 'type', op: 'eq', value: 'stars' },
+                { field: 'value', op, value: 3 },
+              ],
+            },
+          ],
+        });
+      await started(h, [asking(), onAnswer('unhappy', 'lt'), onAnswer('happy', 'gt')]);
+      h.controller.onEvent(CART);
+      h.presenter.answer(5);
+      expect(h.presenter.ids).toEqual(['c1']);
+
+      h.presenter.finish({ kind: 'answered', value: 5, comment: null });
+      await settle();
+      expect(h.presenter.ids).toEqual(['c1', 'happy']);
+    });
+
+    it('a test message with a question reports nothing, records no answer and triggers nothing', async () => {
+      const h = harness();
+      const follow = campaign({ id: 'follow', triggers: [{ type: 'event', name: 'in_app_answered' }] });
+      await started(h, [follow], { test_messages: [asking({ id: 't1' })] });
+      const answered: unknown[] = [];
+      h.controller.callbacks.onAnswered = (...all) => answered.push(all);
+      expect(h.presenter.shown[0]?.campaign.content.question).not.toBeNull();
+
+      h.presenter.answer(5);
+      h.presenter.comment('Looks right');
+      h.presenter.finish({ kind: 'answered', value: 5, comment: 'Looks right' });
+      await settle();
+      expect(h.reports).toEqual([]);
+      expect(answered).toEqual([]);
+      expect(stored(h) ?? []).toEqual([]);
+      expect(h.presenter.ids).toEqual(['t1']);
     });
   });
 });

@@ -42,6 +42,8 @@ export interface EngineState {
   session: string[];
   counts: Record<string, number>;
   syncedAt: number;
+  /** Ids of the campaigns whose question was answered. Absent in state stored before questions existed. */
+  answered?: string[];
 }
 
 export interface EngineOptions {
@@ -87,6 +89,7 @@ export class Engine {
   private session: string[];
   private counts: Record<string, number>;
   private syncedAt: number;
+  private answered: string[];
 
   constructor(options: EngineOptions) {
     this.device = options.device;
@@ -98,6 +101,7 @@ export class Engine {
     this.session = options.state?.session ?? [];
     this.counts = options.state?.counts ?? {};
     this.syncedAt = options.state?.syncedAt ?? options.syncedAt;
+    this.answered = options.state?.answered ?? [];
     this.counted = new Set();
     for (const { campaign } of this.entries) {
       if (!campaign) continue;
@@ -127,6 +131,7 @@ export class Engine {
       session: this.session,
       counts: this.counts,
       syncedAt: this.syncedAt,
+      answered: this.answered,
     };
   }
 
@@ -140,6 +145,11 @@ export class Engine {
    */
   markSynced(at: number): void {
     this.syncedAt = at;
+  }
+
+  /** Records that the question of this campaign was answered, so it is not asked again. */
+  answer(id: string): void {
+    if (!this.answered.includes(id)) this.answered.push(id);
   }
 
   /** Counts the event, decides, and records the view: one call, as the shared cases expect. */
@@ -207,6 +217,7 @@ export class Engine {
     if (this.notReady().includes(campaign.id)) return 'not_ready';
     if (!inSchedule(campaign.schedule, at, this.device.utcOffsetMinutes)) return 'schedule';
     if (!this.conditionsPass(campaign, at)) return 'condition';
+    if (this.answered.includes(campaign.id)) return 'answered';
     return this.capReason(campaign, at);
   }
 

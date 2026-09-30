@@ -7,7 +7,7 @@ import { Engine } from './engine';
 import { ImageCache, type ImageLoader } from './images';
 import { render } from './personalize';
 import { clear, emptyKept, emptySynced, loadKept, loadSynced, saveKept, saveSynced, type Kept, type Synced } from './store';
-import type { Action, Campaign, Decision, Device, EngineEvent, GlobalCaps, Rendered } from './types';
+import type { Action, Campaign, Decision, Device, EngineEvent, GlobalCaps, Question, Rendered } from './types';
 
 /**
  * Connects the engine to the SDK: what it stores, when it syncs, what it
@@ -34,12 +34,21 @@ export interface Presentation {
 export type Outcome =
   | { kind: 'clicked'; buttonId: string | null; action: Action }
   | { kind: 'dismissed'; reason: 'close_button' | 'backdrop' | 'swipe' | 'replaced' | 'app' }
+  /** The question was answered, however the message closed afterwards. */
+  | { kind: 'answered'; value: number | string; comment: string | null }
   /** Never drawn: nothing is reported for it. */
   | { kind: 'dismissed'; reason: 'failed' };
 
+export type Answered = (value: number | string) => void;
+export type Commented = (text: string) => void;
+
 export interface Presenter {
-  /** Calls `drawn` once the message is on the page, and not at all when it could not be put there. */
-  present(presentation: Presentation, drawn: () => void): Promise<Outcome>;
+  /**
+   * Calls `drawn` once the message is on the page, and not at all when it could not be put there.
+   * Calls `answered` at the tap that answers its question, before anything else is asked, and
+   * `commented` at Send with the trimmed text, when there is any: neither waits for the message to close.
+   */
+  present(presentation: Presentation, drawn: () => void, answered: Answered, commented: Commented): Promise<Outcome>;
   /** Closes what is on screen; its promise resolves as dismissed by the app. */
   dismiss(): void;
   /** True when the page removed the message itself, as a page swap does. */
@@ -52,6 +61,8 @@ export interface InAppCallbacks {
   onShown?: (campaignId: string) => void;
   onClicked?: (campaignId: string, buttonId: string | null, payload: Record<string, unknown> | null) => void;
   onDismissed?: (campaignId: string, reason: string) => void;
+  /** Called once the message has closed; `value` is a number, or the option's id for a choice. */
+  onAnswered?: (campaignId: string, value: number | string, comment: string | null) => void;
 }
 
 export interface SyncResult {
@@ -96,6 +107,10 @@ function isObject(value: unknown): value is Record<string, unknown> {
 function capsOf(value: unknown): GlobalCaps {
   const read = (cap: unknown): number | null => (typeof cap === 'number' && Number.isInteger(cap) && cap > 0 ? cap : null);
   return isObject(value) ? { session: read(value.session), day: read(value.day) } : { session: null, day: null };
+}
+
+function answerOf(question: Question, value: number | string): Record<string, unknown> {
+  return { question_id: question.id, type: question.type, value };
 }
 
 export class InAppController {
@@ -335,6 +350,23 @@ export class InAppController {
       this.call(() => this.callbacks.onShown?.(id));
     };
 
+    const { question } = campaign.content;
+    let answer: Record<string, unknown> | null = null;
+    const answered: Answered = (value) => {
+      if (!question) return;
+      // A sync or another tab may have replaced the engine since the message was drawn.
+      this.reload(false);
+      this.engine?.answer(id);
+      this.persist();
+      answer = answerOf(question, value);
+      this.deps.report(this.deps.newId(), 'in_app_answered', { ...base, ...answer });
+      this.handle({ type: 'event', name: 'in_app_answered', properties: { campaign_id: id, ...answer } });
+    };
+    // Reported at Send, not when the message closes: a reload during the thanks must not lose it.
+    const commented: Commented = (comment) => {
+      if (answer) this.deps.report(this.deps.newId(), 'in_app_commented', { ...base, ...answer, comment });
+    };
+
     const rendered: Rendered = {
       title: decision.title ?? null,
       message: decision.message ?? null,
@@ -342,7 +374,7 @@ export class InAppController {
       urls: decision.urls ?? [],
     };
     const generation = this.generation;
-    void this.present({ campaign, rendered }, drawn)
+    void this.present({ campaign, rendered }, drawn, answered, commented)
       .catch((error: unknown): Outcome => {
         this.deps.logger.reportError(GrovsError.inAppDisplayFailed, `In-app message ${id} could not be drawn: ${String(error)}`);
         return { kind: 'dismissed', reason: 'failed' };
@@ -351,7 +383,7 @@ export class InAppController {
         this.showing = null;
         if (generation !== this.generation) return;
         const failed = outcome.kind === 'dismissed' && outcome.reason === 'failed';
-        if (!failed) this.settle(id, base, outcome);
+        if (!failed) this.settle(campaign, base, outcome);
         // A link takes the person away; what waits is shown when they are back, not as they leave.
         if (!(outcome.kind === 'clicked' && outcome.action.type === 'open_url')) this.showWaiting();
       });
@@ -405,7 +437,8 @@ export class InAppController {
     }
     this.showing = campaign.id;
     const generation = this.generation;
-    void this.present({ campaign, rendered: filled.rendered }, () => undefined)
+    const nothing = (): void => undefined;
+    void this.present({ campaign, rendered: filled.rendered }, nothing, nothing, nothing)
       .catch((error: unknown) => this.deps.logger.warn(`In-app test message could not be drawn: ${String(error)}`))
       .then(() => {
         this.showing = null;
@@ -414,15 +447,21 @@ export class InAppController {
       });
   }
 
-  private present(presentation: Presentation, drawn: () => void): Promise<Outcome> {
+  private present(presentation: Presentation, drawn: () => void, answered: Answered, commented: Commented): Promise<Outcome> {
     try {
-      return this.deps.presenter.present(presentation, drawn);
+      return this.deps.presenter.present(presentation, drawn, answered, commented);
     } catch (error) {
       return Promise.reject(error instanceof Error ? error : new Error(String(error)));
     }
   }
 
-  private settle(id: string, base: Record<string, unknown>, outcome: Outcome): void {
+  private settle(campaign: Campaign, base: Record<string, unknown>, outcome: Outcome): void {
+    const { id } = campaign;
+    if (outcome.kind === 'answered') {
+      // The answer and the comment were reported as they were given; only the host is told here.
+      this.call(() => this.callbacks.onAnswered?.(id, outcome.value, outcome.comment));
+      return;
+    }
     if (outcome.kind === 'clicked') {
       const { buttonId, action } = outcome;
       // A tap on the message itself has no button, so it names none.

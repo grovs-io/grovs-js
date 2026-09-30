@@ -80,9 +80,12 @@ export function loadKept(storage: Storage): { kept: Kept; raw: string } | null {
   const raw = storage.get(IN_APP_STATE_KEY);
   const parsed = parse(raw);
   if (raw === null || !parsed || !isObject(parsed.state)) return null;
-  const { views, session, counts } = parsed.state;
+  const { views, session, counts, answered } = parsed.state;
   if (!Array.isArray(views) || !Array.isArray(session) || !isObject(counts)) return null;
-  return { kept: { ...emptyKept(), ...parsed } as Kept, raw };
+  const kept = { ...emptyKept(), ...parsed } as Kept;
+  // Anything but a list of ids would make every decision throw, or a string match by substring.
+  kept.state.answered = Array.isArray(answered) && answered.every((id) => typeof id === 'string') ? (answered as string[]) : [];
+  return { kept, raw };
 }
 
 export function saveSynced(storage: Storage, synced: Synced): boolean {

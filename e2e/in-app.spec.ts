@@ -224,6 +224,40 @@ test.describe('in-app messages', () => {
     await expect(page.getByRole('dialog')).toHaveCount(0);
   });
 
+  test('a stars question in a banner is answered with one click, commented on and thanked for', async ({ page }) => {
+    const question = {
+      id: 'q1',
+      type: 'stars',
+      options: [],
+      comment: { split: 3, low: 'What went wrong?', high: 'What did you like?' },
+      thanks: 'Thank you',
+      review_from: null,
+    };
+    backend.campaigns = [campaign({ template: 'footer', content: { title: 'How was it?', message: null, question } })];
+    await configure(page, backend);
+    await page.evaluate(() => (window as unknown as Host).Grovs.track('cart_viewed'));
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText('How was it?')).toBeVisible();
+    await dialog.getByRole('button', { name: '4 of 5' }).click();
+    await page.evaluate(() => (window as unknown as Host).Grovs.flush());
+    await expect.poll(() => backend.named('in_app_answered').length).toBe(1);
+
+    await expect(dialog.getByText('What did you like?')).toBeVisible();
+    await dialog.getByRole('textbox').fill('  Fast delivery ');
+    await dialog.getByRole('button', { name: 'Send' }).click();
+    await expect(dialog.getByText('Thank you')).toBeVisible();
+    await expect(dialog).toHaveCount(0, { timeout: 4000 });
+
+    await page.evaluate(() => (window as unknown as Host).Grovs.flush());
+    await expect.poll(() => backend.named('in_app_commented').length).toBe(1);
+    const answer = { campaign_id: 'c1', revision: 1, question_id: 'q1', type: 'stars', value: 4 };
+    expect(backend.named('in_app_answered')[0]?.['properties']).toMatchObject(answer);
+    expect(backend.named('in_app_commented')[0]?.['properties']).toMatchObject({ ...answer, comment: 'Fast delivery' });
+    expect(backend.named('in_app_dismissed')).toHaveLength(0);
+    expect(backend.named('in_app_clicked')).toHaveLength(0);
+  });
+
   test('draws every template without overflowing the window', async ({ page }) => {
     const templates = ['cover', 'interstitial', 'half_interstitial', 'header', 'footer', 'alert'];
     backend.campaigns = templates.map((template, index) =>

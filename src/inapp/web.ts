@@ -1,6 +1,6 @@
 import { getDocument, getNavigator, getWindow } from '../core/environment';
 import type { Logger } from '../logging/logger';
-import type { Outcome, Presentation, Presenter } from './controller';
+import type { Answered, Commented, Outcome, Presentation, Presenter } from './controller';
 import { InAppRenderer } from './renderer';
 import type { Device } from './types';
 
@@ -53,11 +53,11 @@ export class WebPresenter implements Presenter {
 
   constructor(private readonly logger: Logger) {}
 
-  present(presentation: Presentation, drawn: () => void): Promise<Outcome> {
+  present(presentation: Presentation, drawn: () => void, answered: Answered, commented: Commented): Promise<Outcome> {
     const doc = getDocument();
     if (!doc) return Promise.reject(new Error('no document'));
     this.renderer ??= new InAppRenderer(doc, this.logger, (url) => getWindow()?.location.assign(url));
-    return this.renderer.present(presentation, drawn);
+    return this.renderer.present(presentation, drawn, answered, commented);
   }
 
   lost(): boolean {

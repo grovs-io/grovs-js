@@ -340,6 +340,16 @@
         },
         "dismissible": {
           "type": "boolean"
+        },
+        "question": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/question"
+            }
+          ]
         }
       },
       "anyOf": [
@@ -363,6 +373,41 @@
           "properties": {
             "tap_action": {
               "type": "object"
+            }
+          }
+        },
+        {
+          "required": [
+            "question"
+          ],
+          "properties": {
+            "question": {
+              "type": "object"
+            }
+          }
+        }
+      ],
+      "oneOf": [
+        {
+          "properties": {
+            "question": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "required": [
+            "question"
+          ],
+          "properties": {
+            "question": {
+              "type": "object"
+            },
+            "buttons": {
+              "maxItems": 0
+            },
+            "tap_action": {
+              "type": "null"
             }
           }
         }
@@ -963,6 +1008,141 @@
         "minLength": 1,
         "maxLength": 256
       }
+    },
+    "question": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type",
+        "options",
+        "comment",
+        "thanks",
+        "review_from"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "stars",
+            "choice"
+          ]
+        },
+        "options": {
+          "type": "array",
+          "maxItems": 5,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "text"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,64}$"
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            }
+          }
+        },
+        "comment": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "split",
+                "low",
+                "high"
+              ],
+              "properties": {
+                "split": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "minimum": 1,
+                  "maximum": 4
+                },
+                "low": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "high": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              }
+            }
+          ]
+        },
+        "thanks": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "review_from": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 5
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "type": {
+              "enum": [
+                "choice"
+              ]
+            },
+            "options": {
+              "minItems": 2
+            },
+            "review_from": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "properties": {
+            "type": {
+              "enum": [
+                "stars"
+              ]
+            },
+            "options": {
+              "maxItems": 0
+            }
+          }
+        }
+      ]
     }
   },
   "oneOf": [
@@ -997,6 +1177,9 @@
                   "type": "null"
                 }
               }
+            },
+            "question": {
+              "type": "null"
             }
           }
         }
@@ -1028,6 +1211,9 @@
                   "type": "string"
                 }
               }
+            },
+            "question": {
+              "type": "null"
             }
           }
         }

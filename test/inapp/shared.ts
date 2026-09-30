@@ -15,6 +15,7 @@ type Json = Record<string, unknown>;
 export interface Step {
   session_start?: boolean;
   sync?: { at: string };
+  answer?: string;
   at?: string;
   event?: EngineEvent;
   expect?: Json;
@@ -124,6 +125,10 @@ export function run(kase: Case, engine: Engine = build(kase)): string | null {
     }
     if (step.sync) {
       engine.markSynced(time(step.sync.at));
+      continue;
+    }
+    if (step.answer !== undefined) {
+      engine.answer(step.answer);
       continue;
     }
     if (!step.event || !step.at || !step.expect) throw new Error(`unreadable step ${index + 1} in "${kase.name}"`);

@@ -50,6 +50,15 @@ export interface Button {
   action: Action;
 }
 
+export interface Question {
+  id: string;
+  type: 'stars' | 'choice';
+  options: { id: string; text: string }[];
+  /** What to ask after the answer: `low` at or below `split`, `high` above it; `low` for all when `split` is null. */
+  comment: { split: number | null; low: string | null; high: string | null } | null;
+  thanks: string | null;
+}
+
 export interface Content {
   title: string | null;
   message: string | null;
@@ -57,6 +66,7 @@ export interface Content {
   tapAction: Action | null;
   /** False when only a button or the tap action may close the message. */
   dismissible: boolean;
+  question: Question | null;
 }
 
 export interface Comparison {
@@ -146,6 +156,7 @@ export type Reason =
   | 'not_ready'
   | 'schedule'
   | 'condition'
+  | 'answered'
   | 'cap_session'
   | 'cap_day'
   | 'cap_week'

@@ -1,30 +1,47 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Logger } from '../../src/logging/logger';
 import { readCampaign } from '../../src/inapp/definition';
-import type { Outcome } from '../../src/inapp/controller';
+import type { Answered, Commented, Outcome } from '../../src/inapp/controller';
 import { InAppRenderer } from '../../src/inapp/renderer';
 import type { Rendered } from '../../src/inapp/types';
 import { merge, readJson } from './shared';
 
 type Json = Record<string, unknown>;
+/** What the host does at the answer and at Send, besides having them recorded. */
+type Hooks = { answered?: Answered; commented?: Commented };
 
 const BASE = readJson('cases.json').base_campaign as Json;
 const IMAGE = { portrait: 'https://cdn.example/p.png', landscape: 'https://cdn.example/l.png' };
 
-function open(changes: Json, rendered: Partial<Rendered> = {}) {
+function open(changes: Json, rendered: Partial<Rendered> = {}, hooks: Hooks = {}) {
   const campaign = readCampaign(merge(BASE, changes));
   if (!campaign) throw new Error('campaign did not read');
   const visited: string[] = [];
-  const renderer = new InAppRenderer(document, new Logger(), (url) => visited.push(url));
+  const logger = new Logger();
+  logger.setLevel('warn');
+  const renderer = new InAppRenderer(document, logger, (url) => visited.push(url));
   const outcome: { value: Outcome | null } = { value: null };
+  const answers: (number | string)[] = [];
+  const comments: string[] = [];
   void renderer
-    .present({ campaign, rendered: { title: 'Hello', message: 'Welcome', buttons: [], urls: [], ...rendered } })
+    .present(
+      { campaign, rendered: { title: 'Hello', message: 'Welcome', buttons: [], urls: [], ...rendered } },
+      undefined,
+      (value) => {
+        answers.push(value);
+        hooks.answered?.(value);
+      },
+      (text) => {
+        comments.push(text);
+        hooks.commented?.(text);
+      },
+    )
     .then((value) => {
       outcome.value = value;
     });
   const root = document.getElementById('grovs-in-app')?.shadowRoot;
   if (!root) throw new Error('nothing was drawn');
-  return { renderer, root, outcome, visited };
+  return { renderer, root, outcome, visited, answers, comments };
 }
 
 async function settle(): Promise<void> {
@@ -33,6 +50,7 @@ async function settle(): Promise<void> {
 
 afterEach(() => {
   document.body.replaceChildren();
+  vi.useRealTimers();
 });
 
 describe('InAppRenderer', () => {
@@ -303,5 +321,344 @@ describe('InAppRenderer', () => {
       document.addEventListener = add;
       document.removeEventListener = remove;
     }
+  });
+});
+
+describe('InAppRenderer questions', () => {
+  const COMMENT = { split: 3, low: 'What went wrong?', high: 'What did you like?' };
+  const OPTIONS = [
+    { id: 'search', text: 'Search' },
+    { id: 'friend', text: '<b>A friend</b>' },
+    { id: 'ad', text: 'An ad' },
+  ];
+
+  function ask(question: Json, content: Json = {}, template = 'interstitial', hooks: Hooks = {}) {
+    const whole = { id: 'q1', type: 'stars', options: [], comment: null, thanks: null, review_from: null, ...question };
+    const drawn = open({ template, content: { ...content, question: whole } }, {}, hooks);
+    const named = (name: string): HTMLButtonElement | undefined =>
+      Array.from(drawn.root.querySelectorAll('button')).find(
+        (button) => (button.getAttribute('aria-label') ?? button.textContent) === name,
+      );
+    const tap = (name: string): void => named(name)?.click();
+    const input = (): HTMLTextAreaElement | null => drawn.root.querySelector('textarea');
+    const closed = (): boolean => document.getElementById('grovs-in-app') === null;
+    return { ...drawn, named, tap, input, closed };
+  }
+
+  it('draws five stars or one button per option, each with a name, under the text', () => {
+    for (const template of ['cover', 'interstitial', 'half_interstitial', 'header', 'footer']) {
+      const stars = ask({}, {}, template);
+      const buttons = Array.from(stars.root.querySelectorAll('.question button'));
+      expect(buttons.map((button) => button.getAttribute('aria-label'))).toEqual(['1 of 5', '2 of 5', '3 of 5', '4 of 5', '5 of 5']);
+      expect(buttons.every((button) => button.tagName === 'BUTTON')).toBe(true);
+      const group = stars.root.querySelector('.body')?.lastElementChild;
+      expect(group?.className).toBe('question stars');
+      expect(group?.getAttribute('role')).toBe('group');
+      expect(group?.getAttribute('aria-label')).toBe('Rating');
+      stars.renderer.dismiss();
+    }
+
+    const choice = ask({ type: 'choice', options: OPTIONS });
+    const options = Array.from(choice.root.querySelectorAll('.question button'));
+    expect(options.map((button) => button.textContent)).toEqual(['Search', '<b>A friend</b>', 'An ad']);
+    expect(choice.root.querySelector('.question')?.hasAttribute('role')).toBe(false);
+  });
+
+  it('draws a question that has no title and no message', () => {
+    const { root } = open(
+      { content: { title: null, message: null, question: { id: 'q1', type: 'stars', options: [], comment: null, thanks: null } } },
+      { title: null, message: null },
+    );
+    expect(root.querySelectorAll('.body > .question button')).toHaveLength(5);
+  });
+
+  it('answers at one tap, once, and closes at once when nothing follows', async () => {
+    const stars = ask({});
+    stars.tap('4 of 5');
+    expect(stars.answers).toEqual([4]);
+    expect(stars.closed()).toBe(true);
+    stars.tap('2 of 5');
+    await settle();
+    expect(stars.answers).toEqual([4]);
+    expect(stars.outcome.value).toEqual({ kind: 'answered', value: 4, comment: null });
+
+    const choice = ask({ type: 'choice', options: OPTIONS });
+    choice.tap('An ad');
+    await settle();
+    expect(choice.outcome.value).toEqual({ kind: 'answered', value: 'ad', comment: null });
+  });
+
+  it('does not answer twice when tapped twice', () => {
+    const { named, answers, root } = ask({ comment: COMMENT });
+    const star = named('2 of 5');
+    star?.click();
+    star?.click();
+    expect(answers).toEqual([2]);
+    expect(root.querySelectorAll('textarea')).toHaveLength(1);
+  });
+
+  it('asks the comment that belongs to the answer', () => {
+    const prompt = (question: Json, answer: string): string | null => {
+      document.body.replaceChildren();
+      const asked = ask(question);
+      asked.tap(answer);
+      return asked.input()?.getAttribute('aria-label') ?? null;
+    };
+    expect(prompt({ comment: COMMENT }, '2 of 5')).toBe('What went wrong?');
+    expect(prompt({ comment: COMMENT }, '3 of 5')).toBe('What went wrong?');
+    expect(prompt({ comment: COMMENT }, '4 of 5')).toBe('What did you like?');
+    expect(prompt({ comment: { ...COMMENT, split: null } }, '5 of 5')).toBe('What went wrong?');
+    expect(prompt({ type: 'choice', options: OPTIONS, comment: { ...COMMENT, split: null } }, 'Search')).toBe('What went wrong?');
+    expect(prompt({ comment: { ...COMMENT, high: null } }, '5 of 5')).toBeNull();
+    expect(prompt({ comment: { ...COMMENT, low: null } }, '1 of 5')).toBeNull();
+    expect(prompt({ comment: { split: null, low: null, high: 'Never asked' } }, '5 of 5')).toBeNull();
+    expect(prompt({ comment: null }, '5 of 5')).toBeNull();
+  });
+
+  it('replaces the question with the prompt, a text box of 500 characters, Send and Skip', () => {
+    const { root, tap, input, named, outcome } = ask({ comment: COMMENT });
+    tap('1 of 5');
+    expect(root.querySelector('.title')?.textContent).toBe('Hello');
+    expect(root.querySelector('.question .message')?.textContent).toBe('What went wrong?');
+    expect(root.querySelector('[aria-label="1 of 5"]')).toBeNull();
+    expect(input()?.maxLength).toBe(500);
+    expect(root.activeElement).toBe(input());
+    expect(named('Send')).toBeDefined();
+    expect(named('Skip')).toBeDefined();
+    expect(outcome.value).toBeNull();
+  });
+
+  it('Send trims the comment and keeps 500 UTF-16 units; only spaces is a Skip', async () => {
+    const sent = async (text: string): Promise<{ outcome: Outcome | null; told: string[] }> => {
+      document.body.replaceChildren();
+      const asked = ask({ comment: COMMENT });
+      asked.tap('5 of 5');
+      const input = asked.input();
+      if (input) input.value = text;
+      asked.tap('Send');
+      await settle();
+      return { outcome: asked.outcome.value, told: asked.comments };
+    };
+    const answered = (comment: string | null): Outcome => ({ kind: 'answered', value: 5, comment });
+    expect(await sent('  Fast delivery \n')).toEqual({ outcome: answered('Fast delivery'), told: ['Fast delivery'] });
+    expect(await sent(` ${'x'.repeat(600)}`)).toEqual({ outcome: answered('x'.repeat(500)), told: ['x'.repeat(500)] });
+    // A character outside the basic plane is two units, so 300 of them are cut to 250.
+    expect(await sent('\u{1F600}'.repeat(300))).toEqual({ outcome: answered('\u{1F600}'.repeat(250)), told: ['\u{1F600}'.repeat(250)] });
+    expect(await sent(' \n\t ')).toEqual({ outcome: answered(null), told: [] });
+    expect(await sent('')).toEqual({ outcome: answered(null), told: [] });
+  });
+
+  it('tells the host the comment at Send, before the thanks, and once', async () => {
+    vi.useFakeTimers();
+    const { tap, input, outcome, comments } = ask({ comment: COMMENT, thanks: 'Thank you' });
+    tap('2 of 5');
+    const box = input();
+    if (box) box.value = ' Late ';
+    tap('Send');
+    expect(comments).toEqual(['Late']);
+    expect(outcome.value).toBeNull();
+    vi.advanceTimersByTime(2000);
+    await settle();
+    expect(comments).toEqual(['Late']);
+    expect(outcome.value).toEqual({ kind: 'answered', value: 2, comment: 'Late' });
+  });
+
+  it('Skip closes with no comment, whatever was typed', async () => {
+    const { tap, input, outcome, closed, comments } = ask({ comment: COMMENT });
+    tap('5 of 5');
+    const box = input();
+    if (box) box.value = 'Typed and left';
+    tap('Skip');
+    await settle();
+    expect(outcome.value).toEqual({ kind: 'answered', value: 5, comment: null });
+    expect(comments).toEqual([]);
+    expect(closed()).toBe(true);
+  });
+
+  it('goes on when the host throws at the answer or at Send, and logs it', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const bug = (): never => {
+      throw new Error('host bug');
+    };
+    const asked = ask({ comment: COMMENT }, {}, 'interstitial', { answered: bug, commented: bug });
+    asked.tap('1 of 5');
+    expect(asked.input()).not.toBeNull();
+    const box = asked.input();
+    if (box) box.value = 'Slow';
+    asked.tap('Send');
+    await settle();
+    expect(asked.outcome.value).toEqual({ kind: 'answered', value: 1, comment: 'Slow' });
+    expect(asked.closed()).toBe(true);
+    expect(asked.answers).toEqual([1]);
+    expect(asked.comments).toEqual(['Slow']);
+    expect(warn.mock.calls.map((call) => String(call[0]))).toEqual([
+      expect.stringContaining('host bug'),
+      expect.stringContaining('host bug'),
+    ]);
+    warn.mockRestore();
+  });
+
+  it('shows the thanks for two seconds, then closes', async () => {
+    vi.useFakeTimers();
+    const { root, tap, outcome, closed } = ask({ thanks: 'Thank you' });
+    tap('5 of 5');
+    const line = root.querySelector('.body > .message');
+    expect(line?.textContent).toBe('Thank you');
+    expect(root.querySelector('.question, .title')).toBeNull();
+    // Read out by focus, as a live region that appears with its text already in it may not be.
+    expect(line?.getAttribute('role')).toBe('status');
+    expect(line?.getAttribute('aria-live')).toBe('polite');
+    expect(root.activeElement).toBe(line);
+
+    vi.advanceTimersByTime(1999);
+    await settle();
+    expect(outcome.value).toBeNull();
+    vi.advanceTimersByTime(1);
+    await settle();
+    expect(outcome.value).toEqual({ kind: 'answered', value: 5, comment: null });
+    expect(closed()).toBe(true);
+  });
+
+  it('shows the thanks after the comment, sent or skipped', async () => {
+    vi.useFakeTimers();
+    for (const button of ['Send', 'Skip']) {
+      const { root, tap, input, outcome } = ask({ comment: COMMENT, thanks: 'Thank you' });
+      tap('2 of 5');
+      const box = input();
+      if (box) box.value = 'Late';
+      tap(button);
+      expect(root.querySelector('.body')?.textContent).toBe('Thank you');
+      vi.advanceTimersByTime(2000);
+      await settle();
+      expect(outcome.value).toEqual({ kind: 'answered', value: 2, comment: button === 'Send' ? 'Late' : null });
+    }
+  });
+
+  it('closing before the answer is a dismissal with its usual reason', async () => {
+    const ways: [(asked: ReturnType<typeof ask>) => void, string][] = [
+      [(asked) => asked.tap('Close'), 'close_button'],
+      [(asked) => asked.root.querySelector<HTMLElement>('.layer')?.click(), 'backdrop'],
+      [() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })), 'close_button'],
+      [(asked) => asked.renderer.dismiss(), 'app'],
+    ];
+    for (const [close, reason] of ways) {
+      const asked = ask({ comment: COMMENT, thanks: 'Thank you' });
+      close(asked);
+      await settle();
+      expect(asked.outcome.value).toEqual({ kind: 'dismissed', reason });
+      expect(asked.answers).toEqual([]);
+    }
+  });
+
+  it('closing while the comment is asked, or the thanks shows, is an answer', async () => {
+    vi.useFakeTimers();
+    const ways: ((asked: ReturnType<typeof ask>) => void)[] = [
+      (asked) => asked.tap('Close'),
+      (asked) => asked.root.querySelector<HTMLElement>('.layer')?.click(),
+      () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })),
+      (asked) => asked.renderer.dismiss(),
+    ];
+    for (const close of ways) {
+      const commenting = ask({ comment: COMMENT, thanks: 'Thank you' });
+      commenting.tap('2 of 5');
+      const box = commenting.input();
+      if (box) box.value = 'Never sent';
+      close(commenting);
+      await settle();
+      expect(commenting.outcome.value).toEqual({ kind: 'answered', value: 2, comment: null });
+
+      const thanked = ask({ comment: COMMENT, thanks: 'Thank you' });
+      thanked.tap('2 of 5');
+      const input = thanked.input();
+      if (input) input.value = 'Sent';
+      thanked.tap('Send');
+      close(thanked);
+      await settle();
+      expect(thanked.outcome.value).toEqual({ kind: 'answered', value: 2, comment: 'Sent' });
+      expect(thanked.closed()).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+    }
+  });
+
+  it('a question that cannot be dismissed closes only through its answer', async () => {
+    vi.useFakeTimers();
+    const leave = (asked: ReturnType<typeof ask>): void => {
+      asked.root.querySelector<HTMLElement>('.layer')?.click();
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    };
+    const asked = ask({ comment: COMMENT, thanks: 'Thank you' }, { dismissible: false, close_button: true });
+    expect(asked.named('Close')).toBeUndefined();
+    leave(asked);
+    await settle();
+    expect(asked.outcome.value).toBeNull();
+    expect(asked.closed()).toBe(false);
+
+    asked.tap('1 of 5');
+    leave(asked);
+    await settle();
+    expect(asked.outcome.value).toBeNull();
+    asked.tap('Skip');
+    leave(asked);
+    await settle();
+    expect(asked.outcome.value).toBeNull();
+    vi.advanceTimersByTime(2000);
+    await settle();
+    expect(asked.outcome.value).toEqual({ kind: 'answered', value: 1, comment: null });
+  });
+
+  it('draws options, prompts and thanks as text, never as markup', () => {
+    const markup = '<img src=x onerror=alert(1)>';
+    const options = [
+      { id: 'a', text: markup },
+      { id: 'b', text: '<b>bold</b>' },
+    ];
+    const { root, tap, named } = ask({ type: 'choice', options, comment: { split: null, low: markup, high: null }, thanks: markup });
+    expect(named(markup)).toBeDefined();
+    expect(root.querySelectorAll('img, b')).toHaveLength(0);
+    tap(markup);
+    expect(root.querySelector('.question .message')?.textContent).toBe(markup);
+    expect(root.querySelectorAll('img, b')).toHaveLength(0);
+    tap('Skip');
+    expect(root.querySelector('.body')?.textContent).toBe(markup);
+    expect(root.querySelectorAll('img, b')).toHaveLength(0);
+  });
+
+  it('keeps the text box inside the focus trap', () => {
+    const { root, tap, input, named } = ask({ comment: COMMENT });
+    tap('1 of 5');
+    const [start, end] = Array.from(root.querySelectorAll<HTMLElement>('.sentinel'));
+    end?.dispatchEvent(new FocusEvent('focus'));
+    expect(root.activeElement).toBe(input());
+    start?.dispatchEvent(new FocusEvent('focus'));
+    expect(root.activeElement).toBe(named('Close'));
+  });
+
+  it('stops when reporting the comment closed the message', async () => {
+    vi.useFakeTimers();
+    const hooks: Hooks = {};
+    const asked = ask({ comment: COMMENT, thanks: 'Thank you' }, {}, 'interstitial', hooks);
+    hooks.commented = () => asked.renderer.dismiss();
+    asked.tap('2 of 5');
+    const box = asked.input();
+    if (box) box.value = 'Bye';
+    asked.tap('Send');
+    await settle();
+    expect(asked.outcome.value).toEqual({ kind: 'answered', value: 2, comment: 'Bye' });
+    expect(asked.closed()).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('stops when reporting the answer closed the message', async () => {
+    const campaign = readCampaign(
+      merge(BASE, { content: { question: { id: 'q1', type: 'stars', options: [], comment: COMMENT, thanks: 'Thank you' } } }),
+    );
+    if (!campaign) throw new Error('campaign did not read');
+    const renderer = new InAppRenderer(document, new Logger(), () => undefined);
+    const rendered = { title: 'Hello', message: null, buttons: [], urls: [] };
+    const outcome = renderer.present({ campaign, rendered }, undefined, () => renderer.dismiss());
+    const root = document.getElementById('grovs-in-app')?.shadowRoot;
+    root?.querySelector<HTMLButtonElement>('[aria-label="5 of 5"]')?.click();
+    expect(await outcome).toEqual({ kind: 'answered', value: 5, comment: null });
+    expect(root?.querySelector('textarea')).toBeNull();
   });
 });

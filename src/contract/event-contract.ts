@@ -33,6 +33,8 @@ export const IN_APP_EVENT_NAMES: ReadonlySet<string> = new Set([
   'in_app_viewed',
   'in_app_clicked',
   'in_app_dismissed',
+  'in_app_answered',
+  'in_app_commented',
 ]);
 
 /** From Grovs::Enrichment in the backend's app_constants.rb. */

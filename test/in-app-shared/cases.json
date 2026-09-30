@@ -2845,7 +2845,7 @@
             "type": "event",
             "name": "cart_viewed",
             "properties": {
-              "q": "a!'()*+ é~-._Z9"
+              "q": "a!'()*+ \u00e9~-._Z9"
             }
           },
           "expect": {
@@ -3266,7 +3266,7 @@
                 {
                   "field": "v",
                   "op": "eq",
-                  "value": "ÉCOLE"
+                  "value": "\u00c9COLE"
                 }
               ]
             }
@@ -3290,7 +3290,7 @@
             "type": "event",
             "name": "probe",
             "properties": {
-              "v": "straße"
+              "v": "stra\u00dfe"
             }
           },
           "expect": {
@@ -3307,7 +3307,7 @@
             "type": "event",
             "name": "probe",
             "properties": {
-              "v": "école"
+              "v": "\u00e9cole"
             }
           },
           "expect": {
@@ -3881,6 +3881,349 @@
             ],
             "urls": [],
             "reasons": {}
+          }
+        }
+      ]
+    },
+    {
+      "name": "a question that was answered is not asked again, and the next campaign takes its place",
+      "campaigns": [
+        {
+          "content": {
+            "question": {
+              "id": "q1",
+              "type": "stars",
+              "options": [],
+              "comment": null,
+              "thanks": null,
+              "review_from": null
+            }
+          },
+          "priority": 5,
+          "caps": {
+            "session": null
+          }
+        },
+        {
+          "id": "c2",
+          "priority": 1,
+          "caps": {
+            "session": null
+          }
+        }
+      ],
+      "steps": [
+        {
+          "at": "2026-10-01T10:00:01Z",
+          "event": {
+            "type": "event",
+            "name": "cart_viewed"
+          },
+          "expect": {
+            "show": "c1",
+            "view": "d1",
+            "reasons": {
+              "c2": "lower_priority"
+            }
+          }
+        },
+        {
+          "answer": "c1"
+        },
+        {
+          "at": "2026-10-01T10:00:02Z",
+          "event": {
+            "type": "event",
+            "name": "cart_viewed"
+          },
+          "expect": {
+            "show": "c2",
+            "view": "d2",
+            "reasons": {
+              "c1": "answered"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "an answer outlasts the session and a sync, and is named before any cap",
+      "campaigns": [
+        {
+          "content": {
+            "question": {
+              "id": "q1",
+              "type": "stars",
+              "options": [],
+              "comment": null,
+              "thanks": null,
+              "review_from": null
+            }
+          },
+          "caps": {
+            "session": 1,
+            "lifetime": 1
+          }
+        }
+      ],
+      "steps": [
+        {
+          "at": "2026-10-01T10:00:01Z",
+          "event": {
+            "type": "event",
+            "name": "cart_viewed"
+          },
+          "expect": {
+            "show": "c1",
+            "view": "d1",
+            "reasons": {}
+          }
+        },
+        {
+          "answer": "c1"
+        },
+        {
+          "session_start": true
+        },
+        {
+          "sync": {
+            "at": "2026-10-01T10:00:02Z"
+          }
+        },
+        {
+          "at": "2026-10-01T10:00:03Z",
+          "event": {
+            "type": "event",
+            "name": "cart_viewed"
+          },
+          "expect": {
+            "show": null,
+            "reasons": {
+              "c1": "answered"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a question that was shown and closed without an answer is asked again",
+      "campaigns": [
+        {
+          "content": {
+            "question": {
+              "id": "q1",
+              "type": "stars",
+              "options": [],
+              "comment": null,
+              "thanks": null,
+              "review_from": null
+            }
+          },
+          "caps": {
+            "session": null
+          }
+        }
+      ],
+      "steps": [
+        {
+          "at": "2026-10-01T10:00:01Z",
+          "event": {
+            "type": "event",
+            "name": "cart_viewed"
+          },
+          "expect": {
+            "show": "c1",
+            "view": "d1",
+            "reasons": {}
+          }
+        },
+        {
+          "at": "2026-10-01T10:00:02Z",
+          "event": {
+            "type": "event",
+            "name": "cart_viewed"
+          },
+          "expect": {
+            "show": "c1",
+            "view": "d2",
+            "reasons": {}
+          }
+        }
+      ]
+    },
+    {
+      "name": "a question of a kind the engine does not know, or one that comes with buttons, is unsupported",
+      "off_schema": [
+        "c1",
+        "c2",
+        "c3"
+      ],
+      "campaigns": [
+        {
+          "content": {
+            "question": {
+              "id": "q1",
+              "type": "nps",
+              "options": [],
+              "comment": null,
+              "thanks": null,
+              "review_from": null
+            }
+          }
+        },
+        {
+          "id": "c2",
+          "content": {
+            "question": {
+              "id": "q1",
+              "type": "choice",
+              "options": [
+                {
+                  "id": "a",
+                  "text": "Only one"
+                }
+              ],
+              "comment": null,
+              "thanks": null,
+              "review_from": null
+            }
+          }
+        },
+        {
+          "id": "c3",
+          "content": {
+            "question": {
+              "id": "q1",
+              "type": "stars",
+              "options": [],
+              "comment": null,
+              "thanks": null,
+              "review_from": null
+            },
+            "buttons": [
+              {
+                "id": "b1",
+                "text": "Go",
+                "action": {
+                  "type": "close"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "steps": [
+        {
+          "at": "2026-10-01T10:00:01Z",
+          "event": {
+            "type": "event",
+            "name": "cart_viewed"
+          },
+          "expect": {
+            "show": null,
+            "reasons": {
+              "c1": "unsupported",
+              "c2": "unsupported",
+              "c3": "unsupported"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a choice question with its options, and a message nobody can dismiss but can answer, are shown",
+      "campaigns": [
+        {
+          "content": {
+            "dismissible": false,
+            "question": {
+              "id": "q1",
+              "type": "choice",
+              "options": [
+                {
+                  "id": "a",
+                  "text": "Search"
+                },
+                {
+                  "id": "b",
+                  "text": "A friend"
+                }
+              ],
+              "comment": {
+                "split": null,
+                "low": "Tell us more",
+                "high": null
+              },
+              "thanks": "Thank you",
+              "review_from": null
+            }
+          }
+        }
+      ],
+      "steps": [
+        {
+          "at": "2026-10-01T10:00:01Z",
+          "event": {
+            "type": "event",
+            "name": "cart_viewed"
+          },
+          "expect": {
+            "show": "c1",
+            "view": "d1",
+            "reasons": {}
+          }
+        }
+      ]
+    },
+    {
+      "name": "a question on an alert or a picture-only template is unsupported, so no one is shut in behind it",
+      "off_schema": [
+        "c1",
+        "c2"
+      ],
+      "campaigns": [
+        {
+          "template": "alert",
+          "content": {
+            "question": {
+              "id": "q1",
+              "type": "stars",
+              "options": [],
+              "comment": null,
+              "thanks": null,
+              "review_from": null
+            }
+          }
+        },
+        {
+          "id": "c2",
+          "template": "cover_image",
+          "content": {
+            "question": {
+              "id": "q1",
+              "type": "stars",
+              "options": [],
+              "comment": null,
+              "thanks": null,
+              "review_from": null
+            },
+            "dismissible": false
+          }
+        }
+      ],
+      "steps": [
+        {
+          "at": "2026-10-01T10:00:01Z",
+          "event": {
+            "type": "event",
+            "name": "cart_viewed"
+          },
+          "expect": {
+            "show": null,
+            "reasons": {
+              "c1": "unsupported",
+              "c2": "unsupported"
+            }
           }
         }
       ]
