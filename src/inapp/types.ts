@@ -15,7 +15,10 @@ export type Template =
   | 'alert'
   | 'cover_image'
   | 'interstitial_image'
-  | 'half_interstitial_image';
+  | 'half_interstitial_image'
+  | 'html';
+
+export type Layout = 'full' | 'modal' | 'banner_top' | 'banner_bottom';
 
 export type ActionType =
   | 'close'
@@ -67,6 +70,8 @@ export interface Content {
   /** False when only a button or the tap action may close the message. */
   dismissible: boolean;
   question: Question | null;
+  /** Set for the html template only. */
+  layout: Layout | null;
 }
 
 export interface Comparison {

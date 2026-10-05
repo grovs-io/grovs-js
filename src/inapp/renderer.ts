@@ -1,5 +1,6 @@
 import type { Logger } from '../logging/logger';
-import type { Answered, Commented, Outcome, Presentation, Presenter } from './controller';
+import type { Answered, Commented, Outcome, Page, Presentation, Presenter } from './controller';
+import { HtmlFrame } from './htmlFrame';
 import type { Action, Campaign, Question } from './types';
 
 /**
@@ -17,6 +18,8 @@ const BANNERS: readonly string[] = ['header', 'footer'];
 const IMAGE_ONLY: readonly string[] = ['cover_image', 'interstitial_image', 'half_interstitial_image'];
 const COMMENT_MAX = 500;
 const THANKS_MS = 2_000;
+/** One deadline from the start of a show to the page being on screen. */
+const PAGE_DEADLINE = 5_000;
 
 const CSS = `
 :host { all: initial; }
@@ -92,6 +95,22 @@ const CSS = `
 .banner .asks .question, .banner .asks .buttons, .banner .asks .prompt, .banner .asks .input { max-width: 640px; }
 .banner .asks .buttons .button { flex: 1 1 0; }
 .button:focus-visible, .close:focus-visible, .tap:focus-visible, .star:focus-visible, .pick:focus-visible, .input:focus-visible { outline: 3px solid #ffbf47; outline-offset: 2px; }
+.layer.banner_top { top: 0; }
+.layer.banner_bottom { bottom: 0; }
+/* Laid out at its final width but invisible, never display: none, so the page can be measured. */
+.layer.html.pending { visibility: hidden; }
+.layer.html .card { display: block; padding: 0; width: min(420px, calc(100vw - 32px)); max-width: none; max-height: none; }
+/* Starts at its largest, so a page that fills its frame shows at full size instead of collapsing; never below the close target. */
+.layer.html .frame { display: block; width: 100%; height: 90vh; border: 0; max-height: 90vh; min-height: 44px; }
+.layer.html.banner .card { width: 100%; border-radius: 0; }
+.layer.html.banner .frame { height: 30vh; max-height: 30vh; }
+.layer.html.banner_top { padding-top: env(safe-area-inset-top); }
+.layer.html.full { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+.layer.html.full .card { width: 100%; height: 100%; border-radius: 0; box-shadow: none; }
+.layer.html.full .frame { height: 100%; max-height: none; }
+/* A 44px target round a smaller visible button. */
+.layer.html .close { top: 0; right: 0; margin: 0; width: 44px; height: 44px; padding: 8px; border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45); background-clip: content-box; color: #ffffff; z-index: 1; }
 .sentinel { position: fixed; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 @media (max-width: 600px) {
   .banner .card { flex-wrap: wrap; }
@@ -164,10 +183,15 @@ export class InAppRenderer implements Presenter {
       };
       this.open = open;
       this.style(root);
+      if (presentation.page) {
+        this.drawPage(open, presentation.campaign, presentation.page, drawn);
+        this.doc.body.appendChild(host);
+        return;
+      }
       this.draw(open, presentation, answered, commented);
       this.doc.body.appendChild(host);
       // Focus first: the host may close the message from onShown, and close() must find every listener to remove.
-      this.focus(open, presentation.campaign);
+      this.focus(open, BANNERS.includes(presentation.campaign.template), presentation.campaign.content.dismissible);
       drawn();
     });
   }
@@ -254,6 +278,85 @@ export class InAppRenderer implements Presenter {
       body.appendChild(paragraph);
     }
     return body;
+  }
+
+  // MARK: html pages
+
+  /** Shown, and counted, once the page is ready and has a height; a full page needs only ready. */
+  private drawPage(open: Open, campaign: Campaign, page: Page, drawn: () => void): void {
+    const content = isObject(campaign.raw.content) ? campaign.raw.content : {};
+    const layout = campaign.content.layout ?? 'modal';
+    const banner = layout === 'banner_top' || layout === 'banner_bottom';
+    const { dismissible } = campaign.content;
+    const layer = this.element('div', `layer html ${layout} pending${banner ? ' banner' : ''}`);
+    if (layout === 'modal' && content.backdrop !== 'none') layer.classList.add('dim');
+    const card = this.element('div', 'card');
+    card.setAttribute('role', 'dialog');
+    card.setAttribute('aria-label', 'Message');
+    if (!banner) card.setAttribute('aria-modal', 'true');
+    const close = this.closeButton(open);
+    card.appendChild(close);
+    if (layout === 'modal') {
+      layer.addEventListener('click', (event) => {
+        if (dismissible && event.target === layer) open.finish({ kind: 'dismissed', reason: 'backdrop' });
+      });
+    }
+    if (!banner) open.root.appendChild(this.sentinel(open, 'start'));
+    layer.appendChild(card);
+    open.root.appendChild(layer);
+    if (!banner) open.root.appendChild(this.sentinel(open, 'end'));
+
+    const fail = (): void => open.finish({ kind: 'dismissed', reason: 'failed' });
+    const deadline = setTimeout(() => {
+      // Not eligible (e.g. a hidden tab): withdrawn, not a failure.
+      if (!page.eligible()) return fail();
+      this.logger.warn(`in_app.html_timeout: in-app message ${campaign.id} was not ready within 5 s`);
+      fail();
+    }, PAGE_DEADLINE);
+    open.cleanup.push(() => clearTimeout(deadline));
+
+    let ready = false;
+    let tall = layout === 'full';
+    const show = (frame: HtmlFrame): void => {
+      if (frame.shown || !ready || !tall) return;
+      if (!page.eligible()) return fail();
+      frame.shown = true;
+      clearTimeout(deadline);
+      layer.classList.remove('pending');
+      this.focus(open, banner, dismissible);
+      drawn();
+    };
+    try {
+      const frame: HtmlFrame = new HtmlFrame(
+        this.doc,
+        page.body,
+        page,
+        {
+          ready: () => {
+            ready = true;
+            show(frame);
+          },
+          missing: () => open.finish({ kind: 'dismissed', reason: 'failed', missing: true }),
+          height: (value) => {
+            if (layout === 'full') return;
+            frame.element.style.height = `${value}px`;
+            tall ||= value > 0;
+            show(frame);
+          },
+          close: () => open.finish({ kind: 'dismissed', reason: 'close_button' }),
+          open: (url, active) => {
+            if (!active) return this.logger.warn(`In-app page open ignored without a tap: ${url}`);
+            this.act(open, null, { type: 'open_url', url }, url);
+          },
+          navigated: () => (frame.shown ? open.finish({ kind: 'dismissed', reason: 'app' }) : fail()),
+        },
+        this.logger,
+      );
+      open.cleanup.push(() => frame.destroy());
+      card.insertBefore(frame.element, close);
+    } catch {
+      fail();
+    }
   }
 
   // MARK: Questions
@@ -443,10 +546,10 @@ export class InAppRenderer implements Presenter {
 
   // MARK: Focus and teardown
 
-  private focus(open: Open, campaign: Campaign): void {
-    if (BANNERS.includes(campaign.template)) return;
+  private focus(open: Open, banner: boolean, dismissible: boolean): void {
+    if (banner) return;
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape' && campaign.content.dismissible) open.finish({ kind: 'dismissed', reason: 'close_button' });
+      if (event.key === 'Escape' && dismissible) open.finish({ kind: 'dismissed', reason: 'close_button' });
     };
     this.doc.addEventListener('keydown', onKey);
     open.cleanup.push(() => this.doc.removeEventListener('keydown', onKey));
@@ -457,7 +560,7 @@ export class InAppRenderer implements Presenter {
   }
 
   private focusables(root: ShadowRoot): HTMLElement[] {
-    return Array.from(root.querySelectorAll<HTMLElement>('button, textarea, [tabindex]')).filter(
+    return Array.from(root.querySelectorAll<HTMLElement>('button, textarea, iframe, [tabindex]')).filter(
       (element) => !element.classList.contains('sentinel') && !element.classList.contains('card'),
     );
   }

@@ -88,10 +88,13 @@ export function loadKept(storage: Storage): { kept: Kept; raw: string } | null {
   return { kept, raw };
 }
 
+/** html campaigns stay in memory; without a stamp the next page load's sync sends them again. */
 export function saveSynced(storage: Storage, synced: Synced): boolean {
-  const kept = [...synced.campaigns].sort((a, b) => priorityOf(b) - priorityOf(a));
+  const kept = synced.campaigns.filter((campaign) => !isHtml(campaign)).sort((a, b) => priorityOf(b) - priorityOf(a));
   for (;;) {
-    const raw = JSON.stringify({ ...synced, campaigns: kept });
+    // Any campaign left out, html or dropped for space, must come back with the next sync.
+    const stamp = kept.length < synced.campaigns.length ? null : synced.campaignsChangedAt;
+    const raw = JSON.stringify({ ...synced, campaigns: kept, campaignsChangedAt: stamp });
     if (raw.length <= BUDGET || kept.length === 0) return storage.set(IN_APP_KEY, raw);
     kept.pop();
   }
@@ -107,4 +110,8 @@ export function saveKept(storage: Storage, kept: Kept): string | null {
 export function clear(storage: Storage): void {
   storage.remove(IN_APP_KEY);
   storage.remove(IN_APP_STATE_KEY);
+}
+
+export function isHtml(campaign: unknown): campaign is Record<string, unknown> & { content: Record<string, unknown> } {
+  return isObject(campaign) && campaign.template === 'html' && isObject(campaign.content);
 }

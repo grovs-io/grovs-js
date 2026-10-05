@@ -338,6 +338,8 @@ export class GrovsClient {
       canRun: () => this.enabled && !this.disposed && this.canTransmit(),
       isVisible,
       sdkVersion: SDK_VERSION,
+      track: (name, properties) => this.track(name, properties),
+      setAttribute: (key, value) => this.setUserAttributes({ ...this.context.userAttributes, [key]: value }),
     });
     this.custom = new CustomEventsHandler({
       events: this.events,

@@ -4228,5 +4228,237 @@
         }
       ]
     }
+  ],
+  "html_parsing": [
+    {
+      "name": "html and a known layout parse as valid",
+      "content": {
+        "html": "<div>Hi</div>",
+        "layout": "modal"
+      },
+      "expect": "valid"
+    },
+    {
+      "name": "every layout value parses as valid",
+      "content": {
+        "html": "<div>Hi</div>",
+        "layout": "banner_top"
+      },
+      "expect": "valid"
+    },
+    {
+      "name": "an unknown layout is unsupported",
+      "content": {
+        "html": "<div>Hi</div>",
+        "layout": "fullscreen"
+      },
+      "expect": "unsupported"
+    },
+    {
+      "name": "missing html is unsupported",
+      "content": {
+        "layout": "modal"
+      },
+      "expect": "unsupported"
+    },
+    {
+      "name": "missing layout is unsupported",
+      "content": {
+        "html": "<div>Hi</div>"
+      },
+      "expect": "unsupported"
+    }
+  ],
+  "link_rule": [
+    {
+      "name": "https with a host",
+      "input": "https://acme.example/path",
+      "expect": "allowed"
+    },
+    {
+      "name": "https with no host, only a fragment",
+      "input": "https://#top",
+      "expect": "refused"
+    },
+    {
+      "name": "https with a space for a host",
+      "input": "https:// acme.example",
+      "expect": "refused"
+    },
+    {
+      "name": "only ASCII spaces count: a no-break space is part of the host",
+      "input": "https://\u00a0acme.example",
+      "expect": "allowed"
+    },
+    {
+      "name": "https scheme in uppercase is lowercased",
+      "input": "HTTPS://acme.example/path",
+      "expect": "allowed"
+    },
+    {
+      "name": "https scheme mixed case is lowercased",
+      "input": "HtTpS://acme.example/path",
+      "expect": "allowed"
+    },
+    {
+      "name": "mailto",
+      "input": "mailto:person@acme.example",
+      "expect": "allowed"
+    },
+    {
+      "name": "tel",
+      "input": "tel:+15551234567",
+      "expect": "allowed"
+    },
+    {
+      "name": "sms",
+      "input": "sms:+15551234567",
+      "expect": "allowed"
+    },
+    {
+      "name": "a bare fragment",
+      "input": "#a",
+      "expect": "allowed"
+    },
+    {
+      "name": "a lone hash",
+      "input": "#",
+      "expect": "allowed"
+    },
+    {
+      "name": "a custom app scheme",
+      "input": "myapp://open",
+      "expect": "allowed"
+    },
+    {
+      "name": "a custom scheme with digits dots and plus",
+      "input": "a1b+c.d://x",
+      "expect": "allowed"
+    },
+    {
+      "name": "another custom scheme",
+      "input": "instagram://user?username=acme",
+      "expect": "allowed"
+    },
+    {
+      "name": "a leading space is stripped",
+      "input": " https://acme.example",
+      "expect": "allowed"
+    },
+    {
+      "name": "a trailing space is stripped",
+      "input": "https://acme.example ",
+      "expect": "allowed"
+    },
+    {
+      "name": "a leading C0 control is stripped",
+      "input": "\u0001https://acme.example",
+      "expect": "allowed"
+    },
+    {
+      "name": "a trailing C0 control is stripped",
+      "input": "https://acme.example\u0007",
+      "expect": "allowed"
+    },
+    {
+      "name": "javascript is forbidden",
+      "input": "javascript:alert(1)",
+      "expect": "refused"
+    },
+    {
+      "name": "javascript in uppercase is still forbidden",
+      "input": "JavaScript:alert(1)",
+      "expect": "refused"
+    },
+    {
+      "name": "vbscript is forbidden",
+      "input": "vbscript:msgbox(1)",
+      "expect": "refused"
+    },
+    {
+      "name": "data is forbidden",
+      "input": "data:text/html,hi",
+      "expect": "refused"
+    },
+    {
+      "name": "blob is forbidden",
+      "input": "blob:https://acme.example/uuid",
+      "expect": "refused"
+    },
+    {
+      "name": "file is forbidden",
+      "input": "file:///etc/passwd",
+      "expect": "refused"
+    },
+    {
+      "name": "about is forbidden",
+      "input": "about:blank",
+      "expect": "refused"
+    },
+    {
+      "name": "intent is forbidden",
+      "input": "intent://scan/#Intent;scheme=zxing;end",
+      "expect": "refused"
+    },
+    {
+      "name": "plain http is forbidden",
+      "input": "http://acme.example",
+      "expect": "refused"
+    },
+    {
+      "name": "a relative path is refused",
+      "input": "path/to/page",
+      "expect": "refused"
+    },
+    {
+      "name": "a root relative path is refused",
+      "input": "/path/to/page",
+      "expect": "refused"
+    },
+    {
+      "name": "a protocol relative url is refused",
+      "input": "//acme.example/path",
+      "expect": "refused"
+    },
+    {
+      "name": "https with no host is refused",
+      "input": "https:foo",
+      "expect": "refused"
+    },
+    {
+      "name": "an embedded tab defeats a naive filter but is still caught",
+      "input": "java\tscript:alert(1)",
+      "expect": "refused"
+    },
+    {
+      "name": "an embedded newline defeats a naive filter but is still caught",
+      "input": "java\nscript:alert(1)",
+      "expect": "refused"
+    },
+    {
+      "name": "an embedded carriage return defeats a naive filter but is still caught",
+      "input": "java\rscript:alert(1)",
+      "expect": "refused"
+    },
+    {
+      "name": "a leading C0 control does not hide a forbidden scheme",
+      "input": "\u0000javascript:alert(1)",
+      "expect": "refused"
+    },
+    {
+      "name": "uppercase with an embedded tab is still caught",
+      "input": "JAVA\tSCRIPT:alert(1)",
+      "expect": "refused"
+    },
+    {
+      "name": "a custom scheme cannot start with a digit",
+      "input": "1app://x",
+      "expect": "refused"
+    },
+    {
+      "name": "an empty string has no scheme and is not a fragment",
+      "input": "",
+      "expect": "refused"
+    }
   ]
 }

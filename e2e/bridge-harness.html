@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>bridge.js harness</title>
+  </head>
+  <body>
+    <!-- Plays the platform: injects a fake __grovs and the copied bridge.js into a sandboxed srcdoc frame. -->
+    <script type="module">
+      import bridge from '/src/inapp/bridge.js?raw';
+
+      window.posts = [];
+      let frame = null;
+
+      window.addEventListener('message', (event) => {
+        if (frame && event.source === frame.contentWindow) window.posts.push(event.data);
+      });
+
+      const json = (value) => JSON.stringify(value).replace(/</g, '\\u003c');
+
+      window.mount = (html, options = {}) => {
+        window.posts = [];
+        frame?.remove();
+        const platform =
+          (options.noResizeObserver ? 'delete window.ResizeObserver;' : '') +
+          (options.noFrames ? 'window.requestAnimationFrame = function () { return 1; };' : '') +
+          `window.__grovs={token:${json(options.token ?? 'T0K3N')},user:${json(options.user ?? {})},` +
+          `event:${json(options.event ?? {})},capabilities:${json(options.capabilities ?? { pushPermission: 'prompt' })},` +
+          'post:function(m){parent.postMessage({message:m,snapshot:m.type==="ready"?document.documentElement.outerHTML:null},"*")}};';
+        const injected = `<script>${platform}</` + `script><script>${bridge}</` + 'script>';
+        const doctype = /^\s*<!doctype[^>]*>/i.exec(html);
+        const srcdoc = doctype ? doctype[0] + injected + html.slice(doctype[0].length) : injected + html;
+        frame = document.createElement('iframe');
+        frame.name = 'message';
+        frame.setAttribute('sandbox', 'allow-scripts');
+        frame.style.cssText = `width:320px;height:${options.height ?? 400}px;border:0`;
+        frame.srcdoc = srcdoc;
+        document.body.append(frame);
+      };
+
+      window.reply = (message) => frame.contentWindow.postMessage(message, '*');
+      window.harnessReady = true;
+    </script>
+  </body>
+</html>

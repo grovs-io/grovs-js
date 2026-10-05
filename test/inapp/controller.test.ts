@@ -4,11 +4,12 @@ import {
   InAppController,
   type Answered,
   type Commented,
+  type ControllerDeps,
   type Outcome,
   type Presentation,
   type SyncResult,
 } from '../../src/inapp/controller';
-import { IN_APP_KEY, IN_APP_STATE_KEY } from '../../src/inapp/store';
+import { IN_APP_KEY, IN_APP_STATE_KEY, emptySynced, saveSynced } from '../../src/inapp/store';
 import type { EngineEvent } from '../../src/inapp/types';
 import { FakeClock } from '../helpers/fake-clock';
 import { FakeStorage } from '../helpers/fake-storage';
@@ -33,6 +34,8 @@ class FakePresenter {
   private settle: ((outcome: Outcome) => void) | null = null;
   fail = false;
   gone = false;
+  /** False stands for an html page that never got shown: no ready, no height, or a missing field. */
+  draws = true;
 
   lost(): boolean {
     return this.gone;
@@ -41,16 +44,19 @@ class FakePresenter {
   /** Stands for the tap that answers the question of the message on screen, and for Send after it. */
   answer: (value: number | string) => void = () => undefined;
   comment: (text: string) => void = () => undefined;
+  /** Stands for an html page becoming ready later than present(). */
+  draw: () => void = () => undefined;
 
   present(presentation: Presentation, drawn: () => void, answered: Answered, commented: Commented): Promise<Outcome> {
     if (this.fail) return Promise.reject(new Error('no DOM'));
     this.shown.push(presentation);
     this.answer = answered;
     this.comment = commented;
+    this.draw = drawn;
     this.gone = false;
     return new Promise((resolve) => {
       this.settle = resolve;
-      drawn();
+      if (this.draws) drawn();
     });
   }
 
@@ -92,7 +98,7 @@ interface Harness {
   respond(campaigns: Json[], extra?: Json): void;
 }
 
-function harness(storage = new FakeStorage(), clock = new FakeClock(START)): Harness {
+function harness(storage = new FakeStorage(), clock = new FakeClock(START), extra: Partial<ControllerDeps> = {}): Harness {
   const presenter = new FakePresenter();
   const reports: Harness['reports'] = [];
   const syncs: Json[] = [];
@@ -143,6 +149,7 @@ function harness(storage = new FakeStorage(), clock = new FakeClock(START)): Har
     random: () => 0.5,
     setTimer: (run, ms) => (ms === 15 * 60_000 ? periodic : timers).push({ run, ms }),
     clearTimer: () => undefined,
+    ...extra,
   });
   const respond = (campaigns: Json[], extra: Json = {}): void => {
     state.response = {
@@ -1172,6 +1179,348 @@ describe('InAppController', () => {
       expect(answered).toEqual([]);
       expect(stored(h) ?? []).toEqual([]);
       expect(h.presenter.ids).toEqual(['t1']);
+    });
+  });
+
+  describe('html messages', () => {
+    const PAGE = '<!doctype html><p>Hi</p>';
+    const html = (changes: Json = {}): Json =>
+      campaign(merge({ template: 'html', content: { html: PAGE, layout: 'modal' } }, changes));
+    const stamp = (h: Harness): unknown => (JSON.parse(h.storage.get(IN_APP_KEY) ?? '{}') as Json).campaignsChangedAt;
+
+    function htmlHarness(storage = new FakeStorage()) {
+      const sent: { tracked: [string, Json][]; attributes: [string, unknown][] } = { tracked: [], attributes: [] };
+      const h = harness(storage, new FakeClock(START), {
+        track: (name, properties) => sent.tracked.push([name, properties]),
+        setAttribute: (key, value) => sent.attributes.push([key, value]),
+      });
+      return { h, sent };
+    }
+
+    async function shown(h: Harness, campaigns: Json[], event: EngineEvent = CART) {
+      h.respond(campaigns);
+      h.controller.start();
+      await settle();
+      h.controller.onEvent(event);
+      const page = h.presenter.shown.at(-1)?.page;
+      if (!page) throw new Error('no html page presented');
+      return page;
+    }
+
+    it('keeps html bodies in memory only, storing no body and a null campaigns stamp', async () => {
+      const { h } = htmlHarness();
+      const page = await shown(h, [html(), campaign({ id: 'c2' })]);
+      expect(page.body).toBe(PAGE);
+      expect(h.storage.get(IN_APP_KEY)).not.toContain('<p>Hi</p>');
+      expect(h.storage.get(IN_APP_KEY)).toContain('"c2"');
+      expect(stamp(h)).toBeNull();
+    });
+
+    it('a reload with a null stamp holds an early event until the sync is back, then shows the html campaign', async () => {
+      const { h } = htmlHarness();
+      await shown(h, [html()]);
+      const again = htmlHarness(h.storage).h;
+      again.respond([html()]);
+      again.controller.start();
+      again.controller.onEvent(CART);
+      expect(again.presenter.ids).toEqual([]);
+      expect(again.syncs[0]).toMatchObject({ campaigns_changed_at: null });
+      await settle();
+      expect(again.presenter.shown.map((shown) => shown.page?.body)).toEqual([PAGE]);
+    });
+
+    it('a stored stamp holds no ordinary event while the sync is in flight', async () => {
+      const first = harness();
+      await started(first, [campaign()]);
+      const h = harness(first.storage);
+      h.state.response = new Promise(() => undefined);
+      h.controller.start();
+      h.controller.onEvent(CART);
+      expect(h.presenter.ids).toEqual(['c1']);
+      expect(h.timers).toEqual([]);
+    });
+
+    it('with a null stamp, a slow sync releases held events after two seconds', async () => {
+      const { h } = htmlHarness();
+      await started(h, [html({ triggers: [{ type: 'event', name: 'other' }] }), campaign({ id: 'c2' })]);
+      const again = htmlHarness(h.storage).h;
+      again.state.response = new Promise(() => undefined);
+      again.controller.start();
+      again.controller.onEvent(CART);
+      expect(again.presenter.ids).toEqual([]);
+      expect(again.timers.map((t) => t.ms)).toEqual([2000]);
+      again.timers[0]?.run();
+      expect(again.presenter.ids).toEqual(['c2']);
+      again.presenter.finish({ kind: 'dismissed', reason: 'close_button' });
+      await settle();
+      again.controller.onEvent(CART);
+      expect(again.presenter.ids).toEqual(['c2', 'c2']);
+    });
+
+    it('a list cut down to the storage budget persists a null stamp', () => {
+      const storage = new FakeStorage();
+      const big = (id: string): Json => campaign({ id, padding: 'x'.repeat(300_000) });
+      saveSynced(storage, { ...emptySynced(), campaigns: [big('a'), big('b')], campaignsChangedAt: 'c1' });
+      const saved = JSON.parse(storage.get(IN_APP_KEY) ?? '{}') as Json;
+      expect((saved.campaigns as unknown[]).length).toBe(1);
+      expect(saved.campaignsChangedAt).toBeNull();
+    });
+
+    it('a native-only list keeps its stamp, so the next sync can answer unchanged', async () => {
+      const { h } = htmlHarness();
+      await started(h, [campaign()]);
+      expect(stamp(h)).toBe('c1');
+      const again = htmlHarness(h.storage).h;
+      again.state.response = { ok: true, body: { unchanged: true, server_time: iso(again.clock.now()) } };
+      again.controller.start();
+      await settle();
+      expect(again.syncs[0]).toMatchObject({ campaigns_changed_at: 'c1' });
+      again.controller.onEvent(CART);
+      expect(again.presenter.ids).toEqual(['c1']);
+    });
+
+    it('another tab writing the store does not drop this tab\'s html campaign', async () => {
+      const { h } = htmlHarness();
+      h.respond([html()]);
+      h.controller.start();
+      await settle();
+      const other = harness(h.storage);
+      await started(other, [campaign({ id: 'c2', triggers: [{ type: 'event', name: 'other' }] })]);
+      other.controller.onEvent({ type: 'event', name: 'other' });
+      h.state.response = { ok: true, body: { unchanged: true, server_time: iso(h.clock.now()) } };
+      h.controller.onForeground();
+      await settle();
+      h.controller.onEvent(CART);
+      expect(h.presenter.shown.map((shown) => shown.page?.body)).toEqual([PAGE]);
+    });
+
+    it('hands the page the user and the event that triggered it', async () => {
+      const { h } = htmlHarness();
+      const page = await shown(h, [html()], { type: 'event', name: 'cart_viewed', properties: { sku: 'A1' } });
+      expect(page.user).toEqual({ first_name: 'Ana' });
+      expect(page.event).toEqual({ sku: 'A1' });
+    });
+
+    it('a page never shown by the deadline uses no cap, reports nothing and stops winning its trigger', async () => {
+      const { h } = htmlHarness();
+      h.presenter.draws = false;
+      await shown(h, [html({ priority: 9, caps: { lifetime: 1 } }), campaign({ id: 'c2', priority: 1 })]);
+      h.presenter.finish({ kind: 'dismissed', reason: 'failed' });
+      await settle();
+      expect(h.reports).toEqual([]);
+      expect(h.storage.get(IN_APP_STATE_KEY)).not.toContain('"campaign":"c1"');
+
+      h.presenter.draws = true;
+      h.controller.onEvent(CART);
+      expect(h.presenter.ids).toEqual(['c1', 'c2']);
+      expect(h.reports.map((report) => report.name)).toEqual(['in_app_viewed']);
+    });
+
+    it('a missing field fails only that show: once the attribute is set, a later trigger shows it', async () => {
+      const { h } = htmlHarness();
+      h.presenter.draws = false;
+      await shown(h, [html({ priority: 9 }), campaign({ id: 'c2', priority: 1 })]);
+      h.presenter.finish({ kind: 'dismissed', reason: 'failed', missing: true });
+      await settle();
+      expect(h.reports).toEqual([]);
+
+      h.presenter.draws = true;
+      h.state.user = { first_name: 'Ana', plan: 'pro' };
+      h.controller.onEvent(CART);
+      expect(h.presenter.ids).toEqual(['c1', 'c1']);
+      expect(h.reports.map((report) => report.name)).toEqual(['in_app_viewed']);
+    });
+
+    it('shows an html page whose leftover native picture never loads', async () => {
+      const { h } = htmlHarness();
+      h.state.images = false;
+      await shown(h, [html({ content: { image: { portrait: 'https://cdn.example.com/gone.png' } } })]);
+      expect(h.presenter.ids).toEqual(['c1']);
+    });
+
+    it('asks again before the page is revealed, and one withdrawn then is not counted as failed', async () => {
+      const { h } = htmlHarness();
+      h.presenter.draws = false;
+      const page = await shown(h, [html()]);
+      expect(page.eligible()).toBe(true);
+      h.controller.pause();
+      expect(page.eligible()).toBe(false);
+      h.controller.resume();
+      h.controller.setExcludedScreens(['checkout']);
+      h.controller.onEvent({ type: 'screen_view', name: 'Checkout' });
+      expect(page.eligible()).toBe(false);
+      h.presenter.finish({ kind: 'dismissed', reason: 'failed' });
+      await settle();
+      expect(h.reports).toEqual([]);
+
+      h.controller.setExcludedScreens([]);
+      h.presenter.draws = true;
+      h.controller.onEvent(CART);
+      expect(h.presenter.ids).toEqual(['c1', 'c1']);
+    });
+
+    it('a page dismissed before it was revealed reports no dismissal and is not counted as failed', async () => {
+      const { h } = htmlHarness();
+      const dismissed: unknown[] = [];
+      h.controller.callbacks.onDismissed = (...args) => dismissed.push(args);
+      h.presenter.draws = false;
+      await shown(h, [html()]);
+      h.controller.discard(true);
+      await settle();
+      expect(h.reports).toEqual([]);
+      expect(dismissed).toEqual([]);
+
+      h.controller.resume();
+      h.presenter.draws = true;
+      h.controller.onEvent(CART);
+      expect(h.presenter.ids).toEqual(['c1', 'c1']);
+    });
+
+    it('a page withdrawn by a pause while it loaded waits and shows on resume', async () => {
+      const { h } = htmlHarness();
+      h.presenter.draws = false;
+      const page = await shown(h, [html()]);
+      h.controller.pause();
+      expect(page.eligible()).toBe(false);
+      h.presenter.finish({ kind: 'dismissed', reason: 'failed' });
+      await settle();
+      expect(h.presenter.ids).toEqual(['c1']);
+      expect(h.reports).toEqual([]);
+
+      h.presenter.draws = true;
+      h.controller.resume();
+      expect(h.presenter.ids).toEqual(['c1', 'c1']);
+      expect(h.reports.map((report) => report.name)).toEqual(['in_app_viewed']);
+    });
+
+    it('a page still loading when the host discards is dropped, not shown on resume', async () => {
+      const { h } = htmlHarness();
+      h.presenter.draws = false;
+      const page = await shown(h, [html()]);
+      h.controller.discard();
+      expect(page.eligible()).toBe(false);
+      h.presenter.finish({ kind: 'dismissed', reason: 'failed' });
+      await settle();
+
+      h.presenter.draws = true;
+      h.controller.resume();
+      expect(h.presenter.ids).toEqual(['c1']);
+      expect(h.reports).toEqual([]);
+    });
+
+    it('a deadline in a hidden tab is a withdrawal: not failed, shown once the tab is back', async () => {
+      const { h } = htmlHarness();
+      h.presenter.draws = false;
+      const page = await shown(h, [html()]);
+      h.state.visible = false;
+      expect(page.eligible()).toBe(false);
+      h.presenter.finish({ kind: 'dismissed', reason: 'failed' });
+      await settle();
+
+      h.presenter.draws = true;
+      h.state.visible = true;
+      h.controller.onForeground();
+      await settle();
+      expect(h.presenter.ids).toEqual(['c1', 'c1']);
+      expect(h.reports.map((report) => report.name)).toEqual(['in_app_viewed']);
+    });
+
+    it('a campaign removed by a sync while its page loaded is withdrawn, uncounted and not shown again', async () => {
+      const { h } = htmlHarness();
+      h.presenter.draws = false;
+      const page = await shown(h, [html()]);
+      h.respond([]);
+      h.controller.onForeground();
+      await settle();
+      expect(page.eligible()).toBe(false);
+      h.presenter.finish({ kind: 'dismissed', reason: 'failed' });
+      await settle();
+      expect(h.reports).toEqual([]);
+
+      h.presenter.draws = true;
+      h.controller.onEvent(CART);
+      expect(h.presenter.ids).toEqual(['c1']);
+    });
+
+    it('track counts the view\'s click at once with campaign_id, and a later open does not count again', async () => {
+      const { h, sent } = htmlHarness();
+      const clicks: unknown[] = [];
+      h.controller.callbacks.onClicked = (...args) => clicks.push(args);
+      const page = await shown(h, [html()]);
+
+      page.actions.track('liked', { stars: 5 });
+      page.actions.track('again', {});
+      expect(sent.tracked).toEqual([
+        ['liked', { stars: 5, campaign_id: 'c1' }],
+        ['again', { campaign_id: 'c1' }],
+      ]);
+      expect(h.reports.slice(1)).toEqual([
+        { id: expect.any(String), name: 'in_app_clicked', properties: { campaign_id: 'c1', revision: 1, action: 'track' } },
+      ]);
+
+      h.presenter.finish({ kind: 'clicked', buttonId: null, action: { type: 'open_url', url: 'https://acme.example' } });
+      await settle();
+      expect(h.reports.filter((report) => report.name === 'in_app_clicked')).toHaveLength(1);
+      expect(clicks).toEqual([['c1', null, null]]);
+    });
+
+    it('an open alone counts the click once', async () => {
+      const { h } = htmlHarness();
+      await shown(h, [html()]);
+      h.presenter.finish({ kind: 'clicked', buttonId: null, action: { type: 'open_url', url: 'https://acme.example' } });
+      await settle();
+      expect(h.reports.slice(1).map((report) => [report.name, report.properties])).toEqual([
+        ['in_app_clicked', { campaign_id: 'c1', revision: 1, action: 'open_url' }],
+      ]);
+    });
+
+    it('setAttribute goes to the SDK', async () => {
+      const { h, sent } = htmlHarness();
+      const page = await shown(h, [html()]);
+      page.actions.setAttribute('plan', 'pro');
+      expect(sent.attributes).toEqual([['plan', 'pro']]);
+    });
+
+    it('a test message logs track and setAttribute instead of sending them', async () => {
+      const { h, sent } = htmlHarness();
+      const logged = vi.spyOn(h.logger, 'info');
+      h.respond([], { test_messages: [html({ id: 't1' })] });
+      h.controller.start();
+      await vi.waitFor(() => expect(h.presenter.shown).toHaveLength(1));
+      const page = h.presenter.shown[0]?.page;
+      expect(page?.body).toBe(PAGE);
+      page?.actions.track('liked', {});
+      page?.actions.setAttribute('plan', 'pro');
+      expect(sent).toEqual({ tracked: [], attributes: [] });
+      expect(h.reports).toEqual([]);
+      expect(logged.mock.calls.map((call) => String(call[0])).join('\n')).toMatch(/track liked[\s\S]*setAttribute plan/);
+    });
+
+    it('ignores native fields left over from an earlier template', async () => {
+      const { h } = htmlHarness();
+      const leftover = {
+        title: '{{ user.missing }}',
+        buttons: [{ id: 'b1', text: '{{ user.missing }}', action: { type: 'open_url', url: 'javascript:alert(1)' } }],
+        tap_action: { type: 'request_push_permission' },
+      };
+      const page = await shown(h, [html({ content: leftover })]);
+      expect(page.body).toBe(PAGE);
+      expect(h.reports.map((report) => report.name)).toEqual(['in_app_viewed']);
+    });
+
+    it('records the view on the current engine when another tab showed a message while the page loaded', async () => {
+      const { h } = htmlHarness();
+      h.presenter.draws = false;
+      await shown(h, [html()]);
+      const other = harness(h.storage);
+      await started(other, [campaign({ id: 'c2', triggers: [{ type: 'event', name: 'other' }] })]);
+      other.controller.onEvent({ type: 'event', name: 'other' });
+      expect(other.presenter.ids).toEqual(['c2']);
+
+      h.presenter.draw();
+      const kept = JSON.parse(h.storage.get(IN_APP_STATE_KEY) ?? '{}') as { state: { views: { campaign: string }[] } };
+      expect(kept.state.views.map((view) => view.campaign)).toEqual(['c2', 'c1']);
+      expect(h.reports.map((report) => report.name)).toEqual(['in_app_viewed']);
     });
   });
 });

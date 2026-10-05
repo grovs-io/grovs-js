@@ -6,7 +6,9 @@ These files are the contract between the backend and every SDK engine. The backe
 |---|---|
 | `definition.schema.json` | JSON Schema, draft-06, for a format 1 campaign definition as the backend sends it |
 | `cases.schema.json` | JSON Schema for `cases.json` |
-| `cases.json` | Campaigns, event sequences and the outcome every engine must produce |
+| `cases.json` | Campaigns, event sequences and the outcome every engine must produce; also holds the standalone `html_parsing` and `link_rule` sections below |
+| `reserved_events.json` | Names a `track`/custom event may never use: the union of `Grovs::Events::MESSAGE_EVENT_NAMES`, `SERVER_EVENT_NAMES` and the system event types. A backend test fails if this file and the constants differ |
+| `bridge.js` | The script injected into an `html` template's page; copied raw and, per SDK, wrapped for its own runtime |
 | `manifest.json` | In SDK copies only: the SHA-256 of each file at copy time |
 
 ## Who the schema binds
@@ -35,6 +37,14 @@ Merge rule: objects merge key by key, recursively. Arrays and scalars, including
 `off_schema` lists campaign ids that deliberately break `definition.schema.json`. The backend would never send them. They test that an engine protects itself: from a format it does not know, from a definition it cannot read, from an unsafe link, and from fields it has never seen.
 
 `unsupported_templates` and `unsupported_actions` on a device are test inputs. They stand for whatever a given build cannot do and do not describe a real platform.
+
+## `html_parsing` and `link_rule`
+
+These two top-level keys are standalone: flat lists, not merged onto any base, and not part of a `case`. The generic case runner (`cases` above) does not read them; they exist for whatever later reads the `html` template and the link rule specifically (the bridge, the builder's lint, and each SDK's own `html`-aware tests).
+
+`html_parsing` cases describe `content`'s `html`/`layout` pair for the `html` template: `expect` is `valid` when an engine can read the definition, `unsupported` when it cannot (an unknown `layout`, or a missing `html` or `layout`) — the same outcome `definition.schema.json` enforces at write time, restated for a reader that must never crash on what it is given.
+
+`link_rule` cases are one `input` string and the `expect` outcome, `allowed` or `refused`, of the rule in the design doc's "One link rule" section: normalise (strip leading/trailing C0 controls and spaces, remove every tab/LF/CR, lowercase the scheme), then allow `https:` with a host, `mailto:`, `tel:`, `sms:`, a `#` fragment, or a custom scheme (`^[a-z][a-z0-9+.-]*:`) that is not `javascript`, `vbscript`, `data`, `blob`, `file`, `about`, `intent` or `http`. A relative URL (no scheme, not starting with `#`) is refused. The cases cover every named scheme, a bare `#`/`#a`, a relative and a protocol-relative URL, an uppercase scheme, `https:foo` (no host), a leading space, a leading C0 control, and a forbidden scheme hidden behind an embedded tab, newline or carriage return.
 
 ## Running a case
 
@@ -111,11 +121,12 @@ A campaign is `unsupported` unless all of this holds. Fields not listed here are
 
 | Part | Must hold |
 |---|---|
-| Campaign | `format`, `priority` and `delay_seconds` are integers, and `delay_seconds` is 0 or more. `id` and `delivery_mode` are non-empty strings. `created_at` is a timestamp. `template` is one of the nine templates |
+| Campaign | `format`, `priority` and `delay_seconds` are integers, and `delay_seconds` is 0 or more. `id` and `delivery_mode` are non-empty strings. `created_at` is a timestamp. `template` is one of the ten templates |
 | Timestamp | `YYYY-MM-DDTHH:MM:SSZ`, with optional `.` and one to three digits before the `Z`. Always UTC, with an uppercase `T` and `Z`. It must be a real calendar time: the 30th of February, hour 24 and second 60 are refused |
 | Integer | A JSON number with no fractional part. 1.0 is the integer 1, because JavaScript cannot tell them apart |
 | Object | Where this table says object, list or string, a value of another kind makes the definition unreadable. A filter, condition, trigger, button or action that is not an object is unreadable |
 | Content | `title` and `message` are each a string or null. `buttons` is a list. `tap_action` is an action or null. `dismissible`, when present, is a boolean; when it is false there is at least one button or a tap action |
+| `html` template's content | `html` is a string. `layout` is one of `full`, `modal`, `banner_top`, `banner_bottom`. Both are required; missing either, or an unknown `layout`, makes the campaign unsupported. See `html_parsing` cases |
 | Button | `id` and `text` are non-empty strings. `action` is an action |
 | Action | `type` is one of the six actions. `open_url` has a `url` string. `key_value` has a `payload` object |
 | Triggers | A list with at least one entry |
@@ -182,7 +193,7 @@ Any other operator, condition type, trigger type or action type is one the engin
 | Where fields work | `title`, `message`, button `text` and `open_url` links. A `key_value` payload is passed to the app as written |
 | Links | A field's value, or its fallback, is percent-encoded before it is placed in a link. Letters, digits, `-`, `.`, `_` and `~` are kept. Every other character becomes its UTF-8 bytes, each as `%` and two uppercase hex digits, so a space is `%20` and never `+` |
 | Link pitfalls | JavaScript's `encodeURIComponent` leaves `!'()*` alone. Kotlin's `URLEncoder` turns a space into `+`. Swift's `urlQueryAllowed` leaves many characters alone. Each engine needs its own encoder |
-| Forbidden schemes | `javascript`, `data`, `file`, `blob`, in any letter case |
+| Forbidden schemes | `javascript`, `data`, `file`, `blob`, in any letter case. This is the general `link`/`open_url` rule; `html` content and the bridge use the stricter `link_rule` cases instead |
 
 ## Delay, dismissal and the store
 

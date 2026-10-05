@@ -6,7 +6,18 @@ import { readCampaign, readTimestamp } from './definition';
 import { Engine } from './engine';
 import { ImageCache, type ImageLoader } from './images';
 import { render } from './personalize';
-import { clear, emptyKept, emptySynced, loadKept, loadSynced, saveKept, saveSynced, type Kept, type Synced } from './store';
+import {
+  clear,
+  emptyKept,
+  emptySynced,
+  isHtml,
+  loadKept,
+  loadSynced,
+  saveKept,
+  saveSynced,
+  type Kept,
+  type Synced,
+} from './store';
 import type { Action, Campaign, Decision, Device, EngineEvent, GlobalCaps, Question, Rendered } from './types';
 
 /**
@@ -26,9 +37,26 @@ const TEST_TRIES = 10;
 const FORGET_AFTER = 14 * 86_400_000;
 const FORMAT = 1;
 
+/** What an html message's page may ask of the SDK besides closing and opening a link. */
+export interface PageActions {
+  track(name: string, properties: Record<string, unknown>): void;
+  setAttribute(key: string, value: unknown): void;
+}
+
+export interface Page {
+  body: string;
+  user: Record<string, unknown>;
+  event: Record<string, unknown>;
+  actions: PageActions;
+  /** Asked again right before the page is revealed; false tears it down as never shown. */
+  eligible: () => boolean;
+}
+
 export interface Presentation {
   campaign: Campaign;
   rendered: Rendered;
+  /** Set for the html template. */
+  page?: Page | undefined;
 }
 
 export type Outcome =
@@ -36,8 +64,8 @@ export type Outcome =
   | { kind: 'dismissed'; reason: 'close_button' | 'backdrop' | 'swipe' | 'replaced' | 'app' }
   /** The question was answered, however the message closed afterwards. */
   | { kind: 'answered'; value: number | string; comment: string | null }
-  /** Never drawn: nothing is reported for it. */
-  | { kind: 'dismissed'; reason: 'failed' };
+  /** Never drawn: nothing is reported for it. `missing`: a personalization field had no value. */
+  | { kind: 'dismissed'; reason: 'failed'; missing?: true };
 
 export type Answered = (value: number | string) => void;
 export type Commented = (text: string) => void;
@@ -88,6 +116,10 @@ export interface ControllerDeps {
   canRun: () => boolean;
   isVisible: () => boolean;
   sdkVersion: string;
+  /** The SDK's event API, for an html page's grovs.track. */
+  track?: (name: string, properties: Record<string, unknown>) => void;
+  /** The SDK's attribute API, for an html page's grovs.setAttribute. */
+  setAttribute?: (key: string, value: unknown) => void;
   random?: () => number;
   setTimer?: (run: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
@@ -124,6 +156,8 @@ export class InAppController {
   private paused = false;
   private showing: string | null = null;
   private waiting: Waiting | null = null;
+  // Bumped by discard(), so a page still loading then is dropped rather than queued again.
+  private discards = 0;
   private excluded = new Set<string>();
   private screen: string | null = null;
   private syncing: Promise<void> | null = null;
@@ -132,6 +166,8 @@ export class InAppController {
   private readonly reported = new Set<string>();
   private lastSyncAttempt = 0;
   private held: { timer: unknown; events: EngineEvent[] } | null = null;
+  /** A null stored stamp means html campaigns were live: every event waits for the first sync, which brings them. */
+  private holdAll = false;
   /** The screen the visit opened on, tracked before in-app could run. */
   private landing: EngineEvent | null = null;
   /** True from the start of a session until its app_open has been taken. */
@@ -142,6 +178,8 @@ export class InAppController {
   private testTimer: unknown = null;
   /** Set when the store refused a write: memory is then newer than what is stored. */
   private unsaved = false;
+  /** html campaigns that failed to show in this page load, so they stop winning their trigger. */
+  private readonly failedHtml = new Set<string>();
   private delayed: { timer: unknown; priority: number } | null = null;
   private generation = 0;
   debug = false;
@@ -156,6 +194,7 @@ export class InAppController {
     this.running = true;
     this.generation += 1;
     this.reload(true);
+    this.holdAll = this.synced.campaignsChangedAt === null;
     this.followSession();
     void this.sync();
     if (this.landing) this.hold(this.landing);
@@ -195,6 +234,7 @@ export class InAppController {
   /** Drops what is waiting; with `dismiss`, also closes what is on screen. Stays paused. */
   discard(dismiss = false): void {
     this.paused = true;
+    this.discards += 1;
     this.waiting = null;
     if (this.delayed) this.cancel(this.delayed.timer);
     this.delayed = null;
@@ -259,6 +299,7 @@ export class InAppController {
       this.fresh = false;
       if (this.syncing) return this.hold(event);
     }
+    if (this.holdAll && this.syncing) return this.hold(event);
     this.handle(event);
     if (event.type === 'screen_view') this.showWaiting();
   }
@@ -286,7 +327,7 @@ export class InAppController {
       if (!this.waiting || priority > this.waiting.priority) this.waiting = { event, priority };
       return;
     }
-    this.show(engine, decision);
+    this.show(engine, decision, event);
   }
 
   /** Holds one message until its delay has passed; then it is decided again, as a waiting one is. */
@@ -327,10 +368,10 @@ export class InAppController {
       this.delay(event, decision.show, engine.campaign(decision.show)?.priority ?? 0, decision.delay ?? 0);
       return;
     }
-    this.show(engine, decision);
+    this.show(engine, decision, event);
   }
 
-  private show(engine: Engine, decision: Decision): void {
+  private show(engine: Engine, decision: Decision, event: EngineEvent): void {
     const id = decision.show;
     const campaign = id === null ? null : engine.campaign(id);
     if (id === null || !campaign) return;
@@ -342,8 +383,12 @@ export class InAppController {
     const revision = campaign.raw.revision;
     const base = { campaign_id: id, revision: typeof revision === 'number' ? revision : 1 };
     // Counted only once it is on the page, so a message nobody saw uses up no limit and reports no view.
+    let seen = false;
     const drawn = (): void => {
-      const view = engine.record(id, this.now());
+      seen = true;
+      // A sync or another tab may have replaced the engine while an html page loaded.
+      this.reload(false);
+      const view = this.engine?.record(id, this.now()) ?? engine.record(id, this.now());
       if (view === null) return;
       this.persist();
       this.deps.report(view, 'in_app_viewed', { ...base, template: campaign.template });
@@ -367,14 +412,45 @@ export class InAppController {
       if (answer) this.deps.report(this.deps.newId(), 'in_app_commented', { ...base, ...answer, comment });
     };
 
+    // At most one click a view: an html page's first track or open.
+    let clicked = false;
+    const click = (buttonId: string | null, action: string, payload: Record<string, unknown> | null): void => {
+      if (clicked) return;
+      clicked = true;
+      // A tap on the message itself has no button, so it names none.
+      const button = buttonId === null ? {} : { button_id: buttonId };
+      this.deps.report(this.deps.newId(), 'in_app_clicked', { ...base, ...button, action });
+      this.call(() => this.callbacks.onClicked?.(id, buttonId, payload));
+    };
+
     const rendered: Rendered = {
       title: decision.title ?? null,
       message: decision.message ?? null,
       buttons: decision.buttons ?? [],
       urls: decision.urls ?? [],
     };
+    let withdrawn = false;
+    const discards = this.discards;
+    const page = isHtml(campaign.raw)
+      ? this.page(
+          String(campaign.raw.content.html),
+          event,
+          {
+            track: (name, properties) => {
+              click(null, 'track', null);
+              this.deps.track?.(name, { ...properties, campaign_id: id });
+            },
+            setAttribute: (key, value) => this.deps.setAttribute?.(key, value),
+          },
+          () => {
+            // A sync may have removed the campaign while the page loaded.
+            withdrawn = !this.eligible() || (this.reload(false), this.engine?.campaign(id) == null);
+            return !withdrawn;
+          },
+        )
+      : undefined;
     const generation = this.generation;
-    void this.present({ campaign, rendered }, drawn, answered, commented)
+    void this.present({ campaign, rendered, page }, drawn, answered, commented)
       .catch((error: unknown): Outcome => {
         this.deps.logger.reportError(GrovsError.inAppDisplayFailed, `In-app message ${id} could not be drawn: ${String(error)}`);
         return { kind: 'dismissed', reason: 'failed' };
@@ -383,7 +459,12 @@ export class InAppController {
         this.showing = null;
         if (generation !== this.generation) return;
         const failed = outcome.kind === 'dismissed' && outcome.reason === 'failed';
-        if (!failed) this.settle(campaign, base, outcome);
+        // Withdrawn at reveal: it waits, as a blocked message does.
+        if (withdrawn && discards === this.discards && (!this.waiting || campaign.priority > this.waiting.priority)) this.waiting = { event, priority: campaign.priority };
+        // A missing field fails only this show: the attribute may be set later.
+        if (failed && page && !withdrawn && !('missing' in outcome && outcome.missing)) this.failedHtml.add(id);
+        // A page closed before it was revealed was never seen: nothing to report.
+        if (!failed && (seen || outcome.kind !== 'dismissed')) this.settle(campaign, base, outcome, click);
         // A link takes the person away; what waits is shown when they are back, not as they leave.
         if (!(outcome.kind === 'clicked' && outcome.action.type === 'open_url')) this.showWaiting();
       });
@@ -438,13 +519,24 @@ export class InAppController {
     this.showing = campaign.id;
     const generation = this.generation;
     const nothing = (): void => undefined;
-    void this.present({ campaign, rendered: filled.rendered }, nothing, nothing, nothing)
+    const log = (call: string): void => this.deps.logger.info(`In-app test message: ${call}, not sent`);
+    const page = isHtml(raw)
+      ? this.page(String(raw.content.html), { type: 'app_open' }, {
+          track: (name) => log(`track ${name}`),
+          setAttribute: (key) => log(`setAttribute ${key}`),
+        })
+      : undefined;
+    void this.present({ campaign, rendered: filled.rendered, page }, nothing, nothing, nothing)
       .catch((error: unknown) => this.deps.logger.warn(`In-app test message could not be drawn: ${String(error)}`))
       .then(() => {
         this.showing = null;
         if (generation !== this.generation) return;
         this.showWaiting();
       });
+  }
+
+  private page(body: string, event: EngineEvent, actions: PageActions, eligible = () => this.eligible()): Page {
+    return { body, user: this.device().user, event: event.properties ?? {}, actions, eligible };
   }
 
   private present(presentation: Presentation, drawn: () => void, answered: Answered, commented: Commented): Promise<Outcome> {
@@ -455,21 +547,19 @@ export class InAppController {
     }
   }
 
-  private settle(campaign: Campaign, base: Record<string, unknown>, outcome: Outcome): void {
+  private settle(
+    campaign: Campaign,
+    base: Record<string, unknown>,
+    outcome: Outcome,
+    click: (buttonId: string | null, action: string, payload: Record<string, unknown> | null) => void,
+  ): void {
     const { id } = campaign;
     if (outcome.kind === 'answered') {
       // The answer and the comment were reported as they were given; only the host is told here.
       this.call(() => this.callbacks.onAnswered?.(id, outcome.value, outcome.comment));
       return;
     }
-    if (outcome.kind === 'clicked') {
-      const { buttonId, action } = outcome;
-      // A tap on the message itself has no button, so it names none.
-      const button = buttonId === null ? {} : { button_id: buttonId };
-      this.deps.report(this.deps.newId(), 'in_app_clicked', { ...base, ...button, action: action.type });
-      this.call(() => this.callbacks.onClicked?.(id, buttonId, action.payload ?? null));
-      return;
-    }
+    if (outcome.kind === 'clicked') return click(outcome.buttonId, outcome.action.type, outcome.action.payload ?? null);
     this.deps.report(this.deps.newId(), 'in_app_dismissed', { ...base, reason: outcome.reason });
     this.call(() => this.callbacks.onDismissed?.(id, outcome.reason));
   }
@@ -489,12 +579,12 @@ export class InAppController {
   private blocked(): boolean {
     // A page that swapped its body took the message with it; closing it frees the screen for the next.
     if (this.showing !== null && this.deps.presenter.lost?.()) this.deps.presenter.dismiss();
-    return (
-      this.paused ||
-      this.showing !== null ||
-      !this.deps.isVisible() ||
-      (this.screen !== null && this.excluded.has(this.screen))
-    );
+    return this.showing !== null || !this.eligible();
+  }
+
+  /** What show() checks besides a free screen; asked again as an html page is revealed. */
+  private eligible(): boolean {
+    return this.active() && !this.paused && this.deps.isVisible() && !(this.screen !== null && this.excluded.has(this.screen));
   }
 
   /** What the visit opened with waits for the sync that start() began, so a campaign paused overnight does not show. */
@@ -508,6 +598,7 @@ export class InAppController {
       if (!held) return;
       this.cancel(held.timer);
       this.held = null;
+      this.holdAll = false;
       if (!this.active()) return;
       // The opening first, then the screen it opened on.
       const order = [...held.events].sort((a, b) => Number(b.type === 'app_open') - Number(a.type === 'app_open'));
@@ -537,14 +628,16 @@ export class InAppController {
       .sync(body)
       .then((result) => {
         if (generation !== this.generation || !result.ok) return;
-        this.apply(result.body, sent);
+        this.apply(result.body, sent, this.deps.clock.now());
         this.takeTests(result.body);
       })
       .catch((error: unknown) => {
         this.deps.logger.warn(`In-app sync failed: ${String(error)}`);
       })
       .then(() => {
-        if (this.syncing === request) this.syncing = null;
+        if (this.syncing !== request) return;
+        this.syncing = null;
+        this.holdAll = false;
       });
     this.syncing = request;
     return request;
@@ -559,12 +652,11 @@ export class InAppController {
     }, SYNC_EVERY);
   }
 
-  private apply(body: unknown, sent: number): void {
+  private apply(body: unknown, sent: number, received: number): void {
     if (!isObject(body)) return;
     const serverTime = readTimestamp(body.server_time);
     if (serverTime === null) return;
     // Half the round trip is the best estimate of when the server read its clock.
-    const received = this.deps.clock.now();
     this.reload(false);
     this.synced.clockOffset = Math.round(serverTime - (sent + received) / 2);
 
@@ -573,9 +665,12 @@ export class InAppController {
       this.synced.campaigns = body.campaigns;
       this.synced.globalCaps = capsOf(body.global_caps);
       this.synced.firstSeenAt = typeof body.first_seen_at === 'string' ? body.first_seen_at : null;
-      if (typeof body.campaigns_changed_at === 'string') this.synced.campaignsChangedAt = body.campaigns_changed_at;
+      const stamp = body.campaigns_changed_at;
+      if (typeof stamp === 'string' || stamp === null) this.synced.campaignsChangedAt = stamp;
       if (typeof body.user_changed_at === 'string') this.synced.userChangedAt = body.user_changed_at;
       if (this.engine) this.kept.state = this.engine.state();
+      // New campaigns or pages: a failed one gets another chance.
+      this.failedHtml.clear();
       this.engine = this.build();
       this.reportUnsupported();
     }
@@ -658,7 +753,7 @@ export class InAppController {
     for (const campaign of this.synced.campaigns) {
       if (isObject(campaign) && typeof campaign.id === 'string' && !this.images.ready(campaign)) out.push(campaign.id);
     }
-    return out;
+    return [...out, ...this.failedHtml];
   }
 
   private persist(force = false): void {

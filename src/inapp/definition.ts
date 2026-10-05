@@ -9,6 +9,7 @@ import type {
   Condition,
   Content,
   Filter,
+  Layout,
   Operator,
   Question,
   Schedule,
@@ -37,9 +38,11 @@ const TEMPLATES: readonly string[] = [
   'cover_image',
   'interstitial_image',
   'half_interstitial_image',
+  'html',
 ];
+const LAYOUTS: readonly string[] = ['full', 'modal', 'banner_top', 'banner_bottom'];
 /** Templates that draw no question: a question on one would have no way to be answered. */
-const NO_QUESTION: readonly string[] = ['alert', 'cover_image', 'interstitial_image', 'half_interstitial_image'];
+const NO_QUESTION: readonly string[] = ['alert', 'cover_image', 'interstitial_image', 'half_interstitial_image', 'html'];
 const ACTIONS: readonly string[] = ['close', 'open_url', 'key_value', 'request_push_permission', 'request_app_rating', 'open_store'];
 const VALUE_OPS: readonly string[] = ['eq', 'neq', 'gt', 'lt', 'contains', 'not_contains'];
 const ORDER_OPS: readonly string[] = ['eq', 'neq', 'gt', 'lt'];
@@ -137,8 +140,16 @@ function readQuestion(value: unknown): Question | null {
   return { id: value.id, type, options, comment, thanks };
 }
 
-function readContent(value: unknown): Content | null {
+function readContent(value: unknown, template: string): Content | null {
   if (!isObject(value)) return null;
+  // The SDK always draws its own close control on a page, so dismissible: false cannot trap anyone.
+  if (template === 'html') {
+    // Native fields left over from an earlier template are never drawn, so they are not read.
+    const { html, layout, dismissible = true } = value;
+    if (typeof html !== 'string' || typeof layout !== 'string' || !LAYOUTS.includes(layout)) return null;
+    if (typeof dismissible !== 'boolean') return null;
+    return { title: null, message: null, buttons: [], tapAction: null, dismissible, question: null, layout: layout as Layout };
+  }
   const { title, message } = value;
   if (title !== null && typeof title !== 'string') return null;
   if (message !== null && typeof message !== 'string') return null;
@@ -154,7 +165,7 @@ function readContent(value: unknown): Content | null {
   if (asks && (!question || buttons.length > 0 || tapAction !== null)) return null;
   // A message nobody can dismiss must offer something to tap, or it would hold the screen for ever.
   if (!dismissible && buttons.length === 0 && tapAction === null && !question) return null;
-  return { title, message, buttons, tapAction, dismissible, question };
+  return { title, message, buttons, tapAction, dismissible, question, layout: null };
 }
 
 function readComparison(value: Raw): Comparison | null {
@@ -287,7 +298,7 @@ export function readCampaign(value: unknown): Campaign | null {
   if (typeof template !== 'string' || !TEMPLATES.includes(template)) return null;
   if (!isWhole(value.delay_seconds) || value.delay_seconds < 0 || !isText(value.delivery_mode)) return null;
   const createdAt = readTimestamp(value.created_at);
-  const content = readContent(value.content);
+  const content = readContent(value.content, template);
   const triggers = readList(value.triggers, readTrigger);
   const conditions = readList(value.conditions, readCondition);
   const caps = readCaps(value.caps);

@@ -18,7 +18,12 @@ const FILE = 'dist/grovs.global.js';
 //
 // Briefly 36 KB while the old messages UI shipped beside its replacement;
 // back to 32 KB now that src/messages is gone.
-const BUDGET_BYTES = 32 * 1024;
+//
+// Raised to 36 KB on 2026-10-02 for html in-app messages: the minified
+// bridge.js is injected into every page, so it ships inside the bundle (about
+// 1.9 KB gzipped), and the frame and the four layouts add about 1.5 KB.
+// 30.3 KB before, 33.5 KB after.
+const BUDGET_BYTES = 36 * 1024;
 
 try {
   statSync(FILE);

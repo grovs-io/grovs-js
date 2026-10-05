@@ -14,7 +14,8 @@ function isObject(value: unknown): value is Record<string, unknown> {
 }
 
 export function imagesOf(campaign: unknown): string[] {
-  if (!isObject(campaign) || !isObject(campaign.content) || !isObject(campaign.content.image)) return [];
+  // An html page loads its own images; native image fields left on it are ignored.
+  if (!isObject(campaign) || campaign.template === 'html' || !isObject(campaign.content) || !isObject(campaign.content.image)) return [];
   const { portrait, landscape } = campaign.content.image;
   return [portrait, landscape].filter((url): url is string => typeof url === 'string' && url.startsWith('https://'));
 }

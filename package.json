@@ -26,7 +26,7 @@
   ],
   "sideEffects": false,
   "scripts": {
-    "build": "tsup",
+    "build": "node scripts/build-bridge.mjs && tsup",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "npm run typecheck && npm run lint && vitest run --coverage",
@@ -52,6 +52,7 @@
     "@playwright/test": "^1.62.1",
     "@types/node": "^22.20.1",
     "@vitest/coverage-v8": "^4.1.11",
+    "esbuild": "^0.28.2",
     "eslint": "^9.39.5",
     "jsdom": "^25.0.1",
     "tsup": "^8.5.1",

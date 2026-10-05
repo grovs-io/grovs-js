@@ -9,12 +9,28 @@
     "base_campaign",
     "base_device",
     "base_case",
-    "cases"
+    "cases",
+    "html_parsing",
+    "link_rule"
   ],
   "properties": {
     "version": {
       "type": "integer",
       "minimum": 1
+    },
+    "html_parsing": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/html_parsing_case"
+      }
+    },
+    "link_rule": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/link_rule_case"
+      }
     },
     "base_campaign": {
       "type": "object"
@@ -54,6 +70,65 @@
     }
   },
   "definitions": {
+    "html_parsing_case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "content",
+        "expect"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "content": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "html": {
+              "type": "string"
+            },
+            "layout": {
+              "type": "string"
+            }
+          }
+        },
+        "expect": {
+          "type": "string",
+          "enum": [
+            "valid",
+            "unsupported"
+          ]
+        }
+      }
+    },
+    "link_rule_case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "input",
+        "expect"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "input": {
+          "type": "string"
+        },
+        "expect": {
+          "type": "string",
+          "enum": [
+            "allowed",
+            "refused"
+          ]
+        }
+      }
+    },
     "global_caps": {
       "type": "object",
       "additionalProperties": false,

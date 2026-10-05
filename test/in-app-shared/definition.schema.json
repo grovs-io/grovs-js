@@ -56,7 +56,8 @@
         "alert",
         "cover_image",
         "interstitial_image",
-        "half_interstitial_image"
+        "half_interstitial_image",
+        "html"
       ]
     },
     "content": {
@@ -336,6 +337,19 @@
             {
               "$ref": "#/definitions/action"
             }
+          ]
+        },
+        "html": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "layout": {
+          "type": "string",
+          "enum": [
+            "full",
+            "modal",
+            "banner_top",
+            "banner_bottom"
           ]
         },
         "dismissible": {
@@ -1156,6 +1170,16 @@
             "header",
             "footer"
           ]
+        },
+        "content": {
+          "properties": {
+            "html": {
+              "not": {}
+            },
+            "layout": {
+              "not": {}
+            }
+          }
         }
       }
     },
@@ -1180,6 +1204,12 @@
             },
             "question": {
               "type": "null"
+            },
+            "html": {
+              "not": {}
+            },
+            "layout": {
+              "not": {}
             }
           }
         }
@@ -1214,8 +1244,29 @@
             },
             "question": {
               "type": "null"
+            },
+            "html": {
+              "not": {}
+            },
+            "layout": {
+              "not": {}
             }
           }
+        }
+      }
+    },
+    {
+      "properties": {
+        "template": {
+          "enum": [
+            "html"
+          ]
+        },
+        "content": {
+          "required": [
+            "html",
+            "layout"
+          ]
         }
       }
     }
