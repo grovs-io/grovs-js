@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Hash-routed smart banner</title>
+  </head>
+  <body>
+    <main><h1>Shop</h1></main>
+    <script src="/dist/grovs.global.js"></script>
+    <script>
+      const setData = () => {
+        const id = location.hash.split('/')[2];
+        if (id) Grovs.smartBanner.setLinkData({ data: { product: id } });
+      };
+      Grovs.configure({ apiKey: 'e2e', baseURL: 'https://sdk.e2e.test' });
+      setData();
+      addEventListener('hashchange', setData);
+    </script>
+  </body>
+</html>

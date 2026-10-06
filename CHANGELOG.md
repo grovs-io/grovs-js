@@ -1,5 +1,33 @@
 # Changelog
 
+## 2.1.0 — 2026-10-06
+
+### Fixed
+
+- An identity reset — local, cross-tab, or a delayed cross-tab one — now
+  clears the smart banner's remembered `setLinkData`/`hide` state and its
+  tab-local caches too, not only on the tab that owns the durable wipe.
+- The smart banner redraws, and the CSS-variable gap is recomputed, after a
+  Turbo/Hotwire/pjax body swap removes its host element outside the SDK.
+
+### Added
+
+- Smart banner: a dashboard-configured "Open in app" banner on mobile
+  browsers, with `Grovs.smartBanner.setLinkData()`, `hide()` and `refresh()`,
+  the `smartBanner` configure option, and the `--grovs-smart-banner-top` /
+  `--grovs-smart-banner-bottom` CSS variables. It is on by default but only
+  shows once a banner is configured in the dashboard.
+- Events `smart_banner_view`, `smart_banner_click` and `smart_banner_dismiss`.
+- The `SmartBannerLinkData` type export.
+- Smart banner support for hash-routed sites: a `#/…` or `#!/…` hash is the
+  page path for URL patterns, `page_path` and page changes.
+
+### Changed
+
+- SPA navigation tracking moved into a shared observer so the banner follows
+  route changes with `autoTrackScreenViews: false`. Screen tracking behaves as
+  before.
+
 ## 2.0.0 — 2026-09-10
 
 A TypeScript rewrite, bringing the JS SDK to behavioural parity with the iOS

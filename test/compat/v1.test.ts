@@ -298,4 +298,18 @@ describe('GrovsV1 compatibility shim', () => {
 
     expect(sdk.getAllReceivedData()).toEqual([{ screen: 'home' }]);
   });
+
+  it('never shows the smart banner', async () => {
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148',
+    );
+    const transport = new FakeTransport();
+    transport
+      .enqueue({ ...AUTH_OK, body: { ...AUTH_OK.body, has_smart_banners: true } })
+      .enqueue({ ok: true, status: 200, body: { data: null } });
+    const sdk = new GrovsV1('k', false, () => undefined, { transport, storage: new FakeStorage() });
+    await sdk.start(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 32));
+    expect(transport.requestsTo('/smart_banners')).toHaveLength(0);
+  });
 });

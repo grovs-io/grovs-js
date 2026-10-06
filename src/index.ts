@@ -4,12 +4,14 @@ import { LinkGenerator } from './links/links';
 import { MessagesService, type GrovsMessage } from './messages/messages';
 import { MessagesUI } from './messages/messages-ui';
 import type { MessagesTheme } from './messages/messages-theme';
-import { getDocument } from './core/environment';
+import { getDocument, getWindow } from './core/environment';
 import { Logger, type LogLevel } from './logging/logger';
 import type { CreateLinkParams } from './net/api';
 import { GrovsV1, noteFacadeConfigured } from './compat/v1';
 import type { ScreenNameProvider } from './tracking/auto-screen-tracker';
 import type { CustomPurchase } from './events/payment-events-handler';
+import type { SmartBannerLinkData } from './smartBanner/link-data';
+import { currentRoute } from './smartBanner/match';
 
 let client: GrovsClient | null = null;
 let links: LinkGenerator | null = null;
@@ -18,6 +20,20 @@ let ui: MessagesUI | null = null;
 let messagesTheme: MessagesTheme | undefined;
 
 const fallbackLogger = new Logger();
+
+// The page's latest setLinkData/hide, replayed into a client configured later on the same route.
+let bannerCalls: { path: string; data?: SmartBannerLinkData; hidden?: boolean } | null = null;
+
+function bannerRoute(): string {
+  const win = getWindow();
+  return win ? currentRoute(win.location) : '';
+}
+
+function bannerPage(): NonNullable<typeof bannerCalls> {
+  const path = bannerRoute();
+  if (bannerCalls?.path !== path) bannerCalls = { path };
+  return bannerCalls;
+}
 
 function notConfigured(method: string): void {
   fallbackLogger.warn(`${method}() called before configure(); the call is a no-op.`);
@@ -59,6 +75,15 @@ const facade = {
     messagesTheme = config.messagesTheme;
     // Automatic display needs the DOM surface, which lives here.
     next.messagesUI = messagesUI;
+    // An identity reset — local, cross-tab, or a delayed cross-tab one — must drop
+    // whatever this page remembered calling, or it replays onto the next visitor.
+    next.onReset = () => {
+      bannerCalls = null;
+    };
+    if (bannerCalls?.path === bannerRoute()) {
+      if (bannerCalls.data) next.smartBanner.setLinkData(bannerCalls.data);
+      if (bannerCalls.hidden) next.smartBanner.hide();
+    }
     return next.configure();
   },
 
@@ -198,7 +223,7 @@ const facade = {
     // The open list belongs to the visitor being cleared: its rows still open
     // that visitor's messages, and the iframe loads them without the SDK.
     ui?.close();
-    client.reset();
+    client.reset(); // onReset clears bannerCalls
   },
 
   /** Drains the queue now, for integrators facing a hard navigation. */
@@ -216,6 +241,25 @@ const facade = {
 
   lastReceivedPayload(): Record<string, unknown> | null {
     return client?.lastReceivedPayload() ?? null;
+  },
+
+  /** The dashboard-configured mobile banner. setLinkData and hide made before configure() apply once it runs. */
+  smartBanner: {
+    setLinkData(data: SmartBannerLinkData): void {
+      bannerPage().data = data;
+      client?.smartBanner.setLinkData(data);
+    },
+    hide(): void {
+      bannerPage().hidden = true;
+      client?.smartBanner.hide();
+    },
+    refresh(): Promise<void> {
+      if (!client) {
+        notConfigured('smartBanner.refresh');
+        return Promise.resolve();
+      }
+      return client.smartBanner.refresh(); // never rejects
+    },
   },
 
   showMessagesList(): Promise<void> {
@@ -283,6 +327,7 @@ export type { CreateLinkParams } from './net/api';
 export type { ScreenNameProvider, ScreenNameDecision } from './tracking/auto-screen-tracker';
 export type { CustomRedirects } from './net/api';
 export type { CustomPurchase, TransactionType } from './events/payment-events-handler';
+export type { SmartBannerLinkData } from './smartBanner/link-data';
 export { GrovsV1 };
 
 export default Grovs;

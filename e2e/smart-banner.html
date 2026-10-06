@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Smart banner</title>
+  </head>
+  <body>
+    <main><h1>Product</h1></main>
+    <script src="/dist/grovs.global.js"></script>
+    <script>
+      Grovs.configure({ apiKey: 'e2e', baseURL: 'https://sdk.e2e.test' });
+      Grovs.smartBanner.setLinkData({ data: { product: '42' } });
+    </script>
+  </body>
+</html>

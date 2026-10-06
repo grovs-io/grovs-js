@@ -49,6 +49,12 @@ export interface CreateLinkParams {
   trackingMedium?: string;
 }
 
+/** Body of POST smart_banners/:id/link; `data` is sent as an object. */
+export interface SmartBannerLinkBody {
+  page_path: string;
+  data: Record<string, string | number | boolean>;
+}
+
 /**
  * The batch endpoint answers HTTP 200 with per-event results (spec B6).
  * A 200 does not mean every event landed.
@@ -74,6 +80,7 @@ const PATHS = {
   markNotificationAsRead: '/mark_notification_as_read',
   notificationsToDisplayAutomatically: '/notifications_to_display_automatically',
   numberOfUnreadNotifications: '/number_of_unread_notifications',
+  smartBanners: '/smart_banners',
 } as const;
 
 export class ApiService {
@@ -185,6 +192,14 @@ export class ApiService {
 
   linkDetails(path: string): Promise<TransportResponse> {
     return this.post(PATHS.linkDetails, { path });
+  }
+
+  smartBanners(): Promise<TransportResponse> {
+    return this.get(PATHS.smartBanners);
+  }
+
+  smartBannerLink(id: number, body: SmartBannerLinkBody): Promise<TransportResponse> {
+    return this.post(`${PATHS.smartBanners}/${id}/link`, body);
   }
 
   /** Enterprise deployments only — the route does not exist unless
