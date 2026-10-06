@@ -49,6 +49,12 @@ export interface CreateLinkParams {
   trackingMedium?: string;
 }
 
+/** Body of POST smart_banners/:id/link; `data` is sent as an object. */
+export interface SmartBannerLinkBody {
+  page_path: string;
+  data: Record<string, string | number | boolean>;
+}
+
 /**
  * The batch endpoint answers HTTP 200 with per-event results (spec B6).
  * A 200 does not mean every event landed.
@@ -71,6 +77,7 @@ const PATHS = {
   createLink: '/create_link',
   attributes: '/visitor_attributes',
   inAppSync: '/in_app/sync',
+  smartBanners: '/smart_banners',
 } as const;
 
 export class ApiService {
@@ -173,6 +180,14 @@ export class ApiService {
     return this.post(PATHS.linkDetails, { path });
   }
 
+  smartBanners(): Promise<TransportResponse> {
+    return this.get(PATHS.smartBanners);
+  }
+
+  smartBannerLink(id: number, body: SmartBannerLinkBody): Promise<TransportResponse> {
+    return this.post(`${PATHS.smartBanners}/${id}/link`, body);
+  }
+
   /** Enterprise deployments only — the route does not exist unless
    *  GROVS_EE=true, so a 404 here is a configuration answer (spec B4). */
   addPaymentEvent(body: unknown): Promise<TransportResponse> {
@@ -185,6 +200,15 @@ export class ApiService {
       url: this.config.endpoint + path,
       headers: this.headers(),
       body,
+      abandon: this.abandonRetries(),
+    });
+  }
+
+  private get(path: string): Promise<TransportResponse> {
+    return this.transport.send({
+      method: 'GET',
+      url: this.config.endpoint + path,
+      headers: this.headers(),
       abandon: this.abandonRetries(),
     });
   }

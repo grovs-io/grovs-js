@@ -32,17 +32,17 @@ export default defineConfig({
     // No external backend needed, runs in verify.
     {
       name: 'chromium',
-      testIgnore: /live\.spec\.ts/,
+      testIgnore: /live\.spec\.ts|smart-banner\.spec\.ts/,
       use: { ...devices['Desktop Chrome'] },
     },
     {
       name: 'webkit',
-      testIgnore: /live\.spec\.ts/,
+      testIgnore: /live\.spec\.ts|smart-banner\.spec\.ts/,
       use: { ...devices['Desktop Safari'] },
     },
     {
       name: 'firefox',
-      testIgnore: /live\.spec\.ts/,
+      testIgnore: /live\.spec\.ts|smart-banner\.spec\.ts/,
       use: { ...devices['Desktop Firefox'] },
     },
     // Live: real backend, opt-in via GROVS_LIVE_API_KEY. Excluded from verify;
@@ -51,6 +51,17 @@ export default defineConfig({
       name: 'live',
       testMatch: /live\.spec\.ts/,
       use: { ...devices['Desktop Chrome'] },
+    },
+    // Smart banners render on mobile UAs only, so these two projects cover them.
+    {
+      name: 'mobile-iphone',
+      testMatch: /smart-banner\.spec\.ts/,
+      use: { ...devices['iPhone 15'] },
+    },
+    {
+      name: 'mobile-pixel',
+      testMatch: /smart-banner\.spec\.ts/,
+      use: { ...devices['Pixel 7'] },
     },
   ],
   webServer: {

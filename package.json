@@ -1,6 +1,6 @@
 {
   "name": "grovs",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Grovs generates dynamic links, tracks attributions, and analyzes referrals, seamlessly directing users to your app or the app store for downloads.",
   "type": "module",
   "main": "./dist/grovs.cjs",
@@ -31,7 +31,7 @@
     "lint": "eslint .",
     "test": "npm run typecheck && npm run lint && vitest run --coverage",
     "verify": "npm run test && npm run build && node scripts/check-size.mjs && node scripts/check-exports.mjs && npm run test:e2e:browsers",
-    "test:e2e:browsers": "playwright test --project=chromium --project=webkit --project=firefox",
+    "test:e2e:browsers": "playwright test --project=chromium --project=webkit --project=firefox --project=mobile-iphone --project=mobile-pixel",
     "test:safari": "npm run build && node --test --test-concurrency=1 scripts/test-safari.mjs",
     "dev": "tsup --watch",
     "demo": "vite --port 5174 --strictPort",

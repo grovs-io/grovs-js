@@ -287,6 +287,86 @@ working, and none of them makes a request:
 
 The `messagesTheme` option is still accepted and ignored.
 
+## Smart banner
+
+On iPhone, iPad and Android browsers the SDK shows the banner configured in
+the Grovs dashboard (Link behaviour → Smart banners). Its button is a Grovs
+link: it opens your app when installed, and otherwise goes to the store and
+delivers the deep link after install. Desktop browsers never see it.
+
+Tell the banner what the current page is about, so "Open in app" lands on the
+right screen. Call it on each page of a single-page app; calls made before
+`configure()` apply once it runs:
+
+```javascript
+Grovs.smartBanner.setLinkData({ data: { product_id: "42" } });
+```
+
+The app receives your `data` plus `page_path` (the page's path, unless you
+pass your own). `data` is a flat object of at most 20 keys with string,
+number or boolean values; keys are at most 64 characters, string values at
+most 512, and the whole payload at most 4 KB. Data over a limit is not sent:
+the banner keeps its default link and the SDK logs a warning.
+
+Pages that never call `setLinkData()` use the banner's default link, with no
+extra request. A tap before the page link arrives uses the default link. If
+the banner or link request fails, the SDK waits 60 seconds, or longer if the
+server's `Retry-After` asks, across page loads in the tab, before asking
+again; a banner already showing stays.
+
+```javascript
+Grovs.smartBanner.hide();      // this page only; not a dismissal
+Grovs.smartBanner.refresh();   // re-run banner selection
+Grovs.configure({ apiKey: "…", smartBanner: false }); // turn it off
+```
+
+The dashboard sets two separate hide periods: after closing, the banner is
+hidden for `dismiss_days`; after opening (tapping the button), it's hidden
+for `open_hide_days`. Either can be 0, hiding the banner for that page view
+only.
+
+The SDK follows route changes in single-page apps on its own, whatever
+`autoTrackScreenViews` is set to. A new page is a new path (see below);
+query-string and `#anchor` changes keep the link data you set. A query-string
+change on the same path is the same page, so if your product id lives in the
+query string (`/product?id=42`), call `setLinkData()` when it changes. Under
+`requireConsent` the banner waits for `grantConsent()`. Values that are
+`undefined` or `null` are left out, so `{ product_id: product?.id }` is fine.
+
+The v1 constructor (`new Grovs(apiKey, …)`) never shows the banner; use
+`Grovs.configure()` to get it.
+
+If two copies of the SDK run on one page, only one banner is drawn. An older
+copy (released before the smart banner) that owns SPA route tracking can hide
+`pushState` route changes from the banner; full page loads and back/forward
+still work.
+
+### Hash-routed sites
+
+When the URL hash starts with `#/` or `#!/` (`shop.com/#/product/42`), the
+hash is the page path: `/product/42`, without the hash's own `?query` or
+`#anchor`. It is what URL patterns match, what `page_path` defaults to, and
+what counts as a new page. Other hashes (`#reviews`) are plain anchors and
+the path is `location.pathname`. An app mounted under a path
+(`/app/#/product/42`) matches on the hash route alone, so write patterns
+like `/product/*`, not `/app/product/*`.
+
+### Fixed headers and footers
+
+A top banner pushes the page down; a bottom banner floats over it. Offset
+your own fixed elements with the two variables the SDK sets on `<html>`:
+
+```css
+.site-header { top: var(--grovs-smart-banner-top, 0); }
+.cookie-bar { bottom: var(--grovs-smart-banner-bottom, 0); }
+```
+
+### Webviews
+
+The banner also shows inside your own app's webview: pass
+`smartBanner: false` there. In Instagram and Facebook in-app browsers the
+button may not be able to open the app.
+
 ## Purchases
 
 ```javascript
@@ -360,6 +440,13 @@ timezone, language, and the WebGL vendor and renderer strings. It also reads
 and writes a visitor identifier in a cookie and in `localStorage`. Tracked
 events carry the event name, your properties and tags, a session id, and the
 attribution path the visit arrived on.
+
+On mobile browsers the smart banner fetches its configuration and, for the
+banner it shows, sends the page path and any link data you passed to
+`setLinkData()`. It stores dismissals in `localStorage`
+(`grovs_smart_banner_dismissed`) and caches its configuration and links in
+`sessionStorage` (`grovs_sb:*` keys), and tracks the `smart_banner_view`,
+`smart_banner_click` and `smart_banner_dismiss` events.
 
 With the default `requireConsent: false` this happens as soon as you call
 `configure()`. If you need it gated behind a banner, use

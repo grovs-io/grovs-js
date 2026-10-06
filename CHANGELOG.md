@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.1.0 — 2026-10-06
 
 ### Added
 
@@ -15,10 +15,31 @@
   a closing thanks can follow. The host hears of it through `onAnswered(campaignId, value,
   comment)`. `in_app_answered` and `in_app_commented` are now reserved event names, and an answer
   can trigger another campaign.
+- Smart banner: a dashboard-configured "Open in app" banner on mobile
+  browsers, with `Grovs.smartBanner.setLinkData()`, `hide()` and `refresh()`,
+  the `smartBanner` configure option, and the `--grovs-smart-banner-top` /
+  `--grovs-smart-banner-bottom` CSS variables. It is on by default but only
+  shows once a banner is configured in the dashboard.
+- Events `smart_banner_view`, `smart_banner_click` and `smart_banner_dismiss`.
+- The `SmartBannerLinkData` type export.
+- Smart banner support for hash-routed sites: a `#/…` or `#!/…` hash is the
+  page path for URL patterns, `page_path` and page changes.
 
 ### Changed
 
-- The bundle budget is 32 KB compressed, up from 24 KB, because in-app ships in the one file.
+- The bundle budget is 39 KB compressed, up from 24 KB, because in-app messages and the
+  smart banner ship in the one file.
+- SPA navigation tracking moved into a shared observer so the banner follows
+  route changes with `autoTrackScreenViews: false`. Screen tracking behaves as
+  before.
+
+### Fixed
+
+- An identity reset — local, cross-tab, or a delayed cross-tab one — now
+  clears the smart banner's remembered `setLinkData`/`hide` state and its
+  tab-local caches too, not only on the tab that owns the durable wipe.
+- The smart banner redraws, and the CSS-variable gap is recomputed, after a
+  Turbo/Hotwire/pjax body swap removes its host element outside the SDK.
 
 ### Deprecated
 

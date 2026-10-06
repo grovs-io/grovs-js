@@ -42,6 +42,16 @@ describe('resolveConfig', () => {
   });
 });
 
+describe('smartBanner option', () => {
+  it('defaults to on', () => {
+    expect(resolveConfig({ apiKey: 'k' }).smartBanner).toBe(true);
+  });
+
+  it('can be turned off', () => {
+    expect(resolveConfig({ apiKey: 'k', smartBanner: false }).smartBanner).toBe(false);
+  });
+});
+
 describe('Context', () => {
   it('starts empty and unauthenticated', () => {
     const ctx = new Context();

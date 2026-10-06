@@ -22,6 +22,9 @@ describe('public facade', () => {
     expect(typeof Grovs.displayAutomaticMessages).toBe('function');
     expect(typeof Grovs.allReceivedPayloadsSinceStartup).toBe('function');
     expect(typeof Grovs.lastReceivedPayload).toBe('function');
+    expect(typeof Grovs.smartBanner.setLinkData).toBe('function');
+    expect(typeof Grovs.smartBanner.hide).toBe('function');
+    expect(typeof Grovs.smartBanner.refresh).toBe('function');
   });
 
   it('exposes the v1 class for existing integrators', () => {
@@ -253,6 +256,76 @@ describe('public facade', () => {
       expect(error).not.toHaveBeenCalled();
       expect(onError).not.toHaveBeenCalled();
     });
+  });
+
+  it('applies smartBanner calls made before configure(), latest wins, and keeps hide() across a re-configure', async () => {
+    vi.resetModules();
+    const { default: Fresh } = await import('../src/index');
+    const { SmartBannerController } = await import('../src/smartBanner/controller');
+    const setLinkData = vi.spyOn(SmartBannerController.prototype, 'setLinkData');
+    const hide = vi.spyOn(SmartBannerController.prototype, 'hide');
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 500 })));
+
+    Fresh.smartBanner.setLinkData({ data: { product: '1' } });
+    Fresh.smartBanner.setLinkData({ data: { product: '2' } });
+    Fresh.smartBanner.hide();
+    expect(setLinkData).not.toHaveBeenCalled();
+    await Fresh.configure({ apiKey: 'k' });
+    expect(setLinkData.mock.calls).toEqual([[{ data: { product: '2' } }]]);
+    expect(hide).toHaveBeenCalledTimes(1);
+
+    await Fresh.configure({ apiKey: 'k' });
+    expect(hide).toHaveBeenCalledTimes(2);
+    Fresh.setEnabled(false);
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('drops remembered smartBanner calls after an identity reset from another tab', async () => {
+    localStorage.clear();
+    document.cookie = 'linksquared=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/';
+    vi.resetModules();
+    const { default: Fresh } = await import('../src/index');
+    const { SmartBannerController } = await import('../src/smartBanner/controller');
+    const setLinkData = vi.spyOn(SmartBannerController.prototype, 'setLinkData');
+    const hide = vi.spyOn(SmartBannerController.prototype, 'hide');
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 500 })));
+
+    await Fresh.configure({ apiKey: 'k' });
+    Fresh.smartBanner.setLinkData({ data: { product: '2' } });
+    Fresh.smartBanner.hide();
+    expect(setLinkData).toHaveBeenCalledTimes(1);
+    expect(hide).toHaveBeenCalledTimes(1);
+
+    window.dispatchEvent(new StorageEvent('storage', { key: 'linksquared', oldValue: 'v1', newValue: null }));
+
+    // A later re-configure (the next visitor's client) must not replay the
+    // previous visitor's remembered hide()/setLinkData.
+    await Fresh.configure({ apiKey: 'k' });
+    expect(setLinkData).toHaveBeenCalledTimes(1);
+    expect(hide).toHaveBeenCalledTimes(1);
+
+    Fresh.setEnabled(false);
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('remembers smartBanner calls per hash route', async () => {
+    vi.resetModules();
+    const { default: Fresh } = await import('../src/index');
+    const { SmartBannerController } = await import('../src/smartBanner/controller');
+    const setLinkData = vi.spyOn(SmartBannerController.prototype, 'setLinkData');
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 500 })));
+    history.replaceState({}, '', '/#/product/1');
+
+    Fresh.smartBanner.setLinkData({ data: { product: '1' } });
+    history.replaceState({}, '', '/#/product/2');
+    await Fresh.configure({ apiKey: 'k' });
+    expect(setLinkData).not.toHaveBeenCalled();
+    Fresh.setEnabled(false);
+    history.replaceState({}, '', '/');
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it('does not throw when identity setters are called before configure', () => {

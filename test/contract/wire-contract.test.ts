@@ -4,6 +4,7 @@ import { enrich } from '../../src/events/enrich';
 import { resolveConfig } from '../../src/core/config';
 import { Context } from '../../src/core/context';
 import { FakeTransport } from '../helpers/fake-transport';
+import { SDK_VERSION } from '../../src/version';
 
 /**
  * Golden request shapes, one per endpoint.
@@ -227,10 +228,28 @@ describe('wire contract — request bodies', () => {
         'Content-Type': 'application/json',
         PLATFORM: 'web',
         'PROJECT-KEY': 'k',
-        'SDK-VERSION': '2.0',
+        'SDK-VERSION': SDK_VERSION,
         IDENTIFIER: 'https://app.example.com',
       });
       expect(request.headers['PROJECT_KEY']).toBeUndefined();
     }
+  });
+});
+
+describe('wire contract — smart banners', () => {
+  it('GET /smart_banners', async () => {
+    const transport = new FakeTransport();
+    await service(transport).smartBanners();
+    expect(transport.last?.method).toBe('GET');
+    expect(transport.last?.url).toBe('https://sdk.sqd.link/api/v1/sdk/smart_banners');
+    expect(transport.last?.body).toBeUndefined();
+  });
+
+  it('POST /smart_banners/:id/link sends data as an object', async () => {
+    const transport = new FakeTransport();
+    await service(transport).smartBannerLink(7, { page_path: '/p/1', data: { id: 1, on: true } });
+    expect(transport.last?.method).toBe('POST');
+    expect(transport.last?.url).toBe('https://sdk.sqd.link/api/v1/sdk/smart_banners/7/link');
+    expect(transport.last?.body).toEqual({ page_path: '/p/1', data: { id: 1, on: true } });
   });
 });

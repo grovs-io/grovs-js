@@ -1,12 +1,15 @@
 import { GrovsClient } from './core/client';
 import { resolveConfig, type GrovsConfig } from './core/config';
 import { LinkGenerator } from './links/links';
+import { getWindow } from './core/environment';
 import { Logger, type LogLevel } from './logging/logger';
 import type { CreateLinkParams } from './net/api';
 import { GrovsV1, noteFacadeConfigured, type GrovsMessage } from './compat/v1';
 import type { ScreenNameProvider } from './tracking/auto-screen-tracker';
 import type { CustomPurchase } from './events/payment-events-handler';
 import type { InAppCallbacks } from './inapp/controller';
+import type { SmartBannerLinkData } from './smartBanner/link-data';
+import { currentRoute } from './smartBanner/match';
 
 let client: GrovsClient | null = null;
 let links: LinkGenerator | null = null;
@@ -31,6 +34,20 @@ function applyInAppSettings(target: GrovsClient): void {
 }
 
 const fallbackLogger = new Logger();
+
+// The page's latest setLinkData/hide, replayed into a client configured later on the same route.
+let bannerCalls: { path: string; data?: SmartBannerLinkData; hidden?: boolean } | null = null;
+
+function bannerRoute(): string {
+  const win = getWindow();
+  return win ? currentRoute(win.location) : '';
+}
+
+function bannerPage(): NonNullable<typeof bannerCalls> {
+  const path = bannerRoute();
+  if (bannerCalls?.path !== path) bannerCalls = { path };
+  return bannerCalls;
+}
 
 function notConfigured(method: string): void {
   fallbackLogger.warn(`${method}() called before configure(); the call is a no-op.`);
@@ -57,6 +74,15 @@ const facade = {
     client = next;
     links = new LinkGenerator(next);
     applyInAppSettings(next);
+    // An identity reset — local, cross-tab, or a delayed cross-tab one — must drop
+    // whatever this page remembered calling, or it replays onto the next visitor.
+    next.onReset = () => {
+      bannerCalls = null;
+    };
+    if (bannerCalls?.path === bannerRoute()) {
+      if (bannerCalls.data) next.smartBanner.setLinkData(bannerCalls.data);
+      if (bannerCalls.hidden) next.smartBanner.hide();
+    }
     return next.configure();
   },
 
@@ -182,7 +208,7 @@ const facade = {
   /** Clears stored identifiers, the session and the queued events. */
   reset(): void {
     if (!client) return notConfigured('reset');
-    client.reset();
+    client.reset(); // onReset clears bannerCalls
   },
 
   /** Drains the queue now, for integrators facing a hard navigation. */
@@ -200,6 +226,25 @@ const facade = {
 
   lastReceivedPayload(): Record<string, unknown> | null {
     return client?.lastReceivedPayload() ?? null;
+  },
+
+  /** The dashboard-configured mobile banner. setLinkData and hide made before configure() apply once it runs. */
+  smartBanner: {
+    setLinkData(data: SmartBannerLinkData): void {
+      bannerPage().data = data;
+      client?.smartBanner.setLinkData(data);
+    },
+    hide(): void {
+      bannerPage().hidden = true;
+      client?.smartBanner.hide();
+    },
+    refresh(): Promise<void> {
+      if (!client) {
+        notConfigured('smartBanner.refresh');
+        return Promise.resolve();
+      }
+      return client.smartBanner.refresh(); // never rejects
+    },
   },
 
   /** @deprecated The messages inbox was removed; in-app messages replace it. Does nothing. */
@@ -302,6 +347,7 @@ export type { ScreenNameProvider, ScreenNameDecision } from './tracking/auto-scr
 export type { CustomRedirects } from './net/api';
 export type { CustomPurchase, TransactionType } from './events/payment-events-handler';
 export type { InAppCallbacks } from './inapp/controller';
+export type { SmartBannerLinkData } from './smartBanner/link-data';
 export { GrovsV1 };
 
 export default Grovs;

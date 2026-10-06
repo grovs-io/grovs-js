@@ -40,6 +40,8 @@ import { InAppController } from '../inapp/controller';
 import { IN_APP_KEY, IN_APP_STATE_KEY } from '../inapp/store';
 import { WebPresenter, isVisible, loadImage, webDevice } from '../inapp/web';
 import { randomUUID } from './uuid';
+import { SmartBannerController } from '../smartBanner/controller';
+import { BannerStore, DISMISSED_KEY } from '../smartBanner/store';
 
 export { IDENTITY_KEY as LINKSQUARED_STORAGE_KEY };
 const OPENS_KEY = 'grovs_opens';
@@ -59,6 +61,7 @@ const BULK_KEYS = [
   STORED_PATH_KEY,
   IN_APP_KEY,
   IN_APP_STATE_KEY,
+  DISMISSED_KEY,
 ] as const;
 
 /**
@@ -145,6 +148,9 @@ export class GrovsClient {
   private readonly lifecycle: LifecycleTracker;
   private readonly aliases = new ScreenAliases();
   private readonly screens: AutoScreenTracker;
+  readonly smartBanner: SmartBannerController;
+  /** From authenticate; false skips every banner request. */
+  private hasSmartBanners = false;
   private readonly autoStartEvents: boolean;
   private payments: PaymentEventsHandler | null = null;
   private pipelineStarted = false;
@@ -376,6 +382,13 @@ export class GrovsClient {
       // string would otherwise throw from a timer on every route change.
       onScreen: (name) => this.trackScreenView(name),
     });
+    this.smartBanner = new SmartBannerController({
+      api: this.api,
+      logger: this.logger,
+      store: new BannerStore(this.storage, this.storageScope, () => this.clock.now()),
+      track: (name, properties) => this.track(name, properties),
+      generation: () => this.configureGeneration,
+    });
 
     this.context.linksquaredId = this.readIdentity();
     // Both listeners live for the client's whole life, added and removed in
@@ -469,6 +482,10 @@ export class GrovsClient {
     // in the store the new visitor already owns.
     if (!wipeDurable) this.queue.discard();
     this.shutdown();
+    // Tab-local banner caches belong to the visitor being cleared too — on every
+    // path, not only when this tab owns the durable wipe (see onStorage).
+    this.smartBanner.clearCaches();
+    this.onReset?.();
     if (wipeDurable) {
       // The campaigns, views and counts belong to the visitor being cleared.
       this.inApp.clear();
@@ -505,6 +522,7 @@ export class GrovsClient {
     // Durable Grovs_path is cleared above; the in-memory copy has to go too,
     // or events after the reset inherit the previous campaign.
     this.sessionPath = null;
+    this.hasSmartBanners = false;
 
     this.consentGranted = !this.config.requireConsent;
     if (!this.consentGranted) {
@@ -530,6 +548,8 @@ export class GrovsClient {
     // `disposed` covers the facade case: Grovs.configure() builds a *new*
     // client, so the old one's counter never moves — only its shutdown does.
     const superseded = (): boolean => generation !== this.configureGeneration || this.disposed;
+    // Every generation change goes through stop(): it clears the in-flight link requests.
+    this.smartBanner.stop();
 
     // Captured before the consent gate. The store is memory until consent
     // lands, so nothing reaches the device — but a router that cleans the
@@ -621,9 +641,11 @@ export class GrovsClient {
 
     this.context.authenticated = true;
     this.logger.info('Authenticated.');
+    this.hasSmartBanners = body['has_smart_banners'] === true;
 
     if (superseded()) return false;
     if (this.autoStartEvents) this.startEventPipeline(hadIdentity);
+    this.startSmartBanner();
 
     let resolved = false;
     try {
@@ -664,6 +686,13 @@ export class GrovsClient {
 
     this.initComplete = true;
     return true;
+  }
+
+  /** Set by the facade: its own remembered setLinkData/hide belong to the visitor being cleared. */
+  onReset: (() => void) | null = null;
+
+  private startSmartBanner(): void {
+    if (this.config.smartBanner && this.hasSmartBanners && this.enabled) this.smartBanner.start();
   }
 
   /**
@@ -784,6 +813,7 @@ export class GrovsClient {
     this.lifecycle.stop();
     this.screens.stop();
     this.cancelAuthRetry();
+    this.smartBanner.stop();
   }
 
   /**
@@ -957,6 +987,7 @@ export class GrovsClient {
         if (this.config.autoTrackScreenViews) this.screens.start();
         this.events.resume();
         this.inApp.start();
+        this.startSmartBanner();
         // Only configure() consumed this before, and the facade's configure()
         // builds a *new* client — so an identifier set while stopped sat in
         // the context until the next page load read the server value over it.

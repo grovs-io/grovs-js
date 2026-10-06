@@ -50,6 +50,8 @@ export interface GrovsConfig {
   messagesTheme?: MessagesTheme;
   onDeeplink?: DeeplinkCallback;
   onError?: ErrorCallback;
+  /** Shows the smart banner configured in the dashboard on mobile browsers. Default true. */
+  smartBanner?: boolean;
 }
 
 export interface ResolvedConfig {
@@ -65,6 +67,7 @@ export interface ResolvedConfig {
   debugLevel: LogLevel;
   onDeeplink: DeeplinkCallback | null;
   onError: ErrorCallback | null;
+  smartBanner: boolean;
 }
 
 export function resolveConfig(input: GrovsConfig): ResolvedConfig {
@@ -88,6 +91,7 @@ export function resolveConfig(input: GrovsConfig): ResolvedConfig {
     debugLevel: LOG_LEVELS.has(input.debugLevel ?? 'error') ? (input.debugLevel ?? 'error') : 'error',
     onDeeplink: input.onDeeplink ?? null,
     onError: input.onError ?? null,
+    smartBanner: input.smartBanner ?? true,
   };
   if (input.cookieDomain) resolved.cookieDomain = input.cookieDomain;
   return resolved;

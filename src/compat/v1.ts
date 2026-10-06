@@ -87,6 +87,8 @@ export class GrovsV1 {
       {
         apiKey,
         testEnvironment,
+        // v1 integrators never opted in, and the shim offers no way to turn it off.
+        smartBanner: false,
         onDeeplink: (payload) => this.linkHandlingCallback(payload),
       },
       deps,

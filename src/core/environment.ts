@@ -38,6 +38,15 @@ export function getLocalStorage(): globalThis.Storage | null {
   }
 }
 
+/** As getLocalStorage; present-but-throwing is a real state. */
+export function getSessionStorage(): globalThis.Storage | null {
+  try {
+    return typeof sessionStorage === 'undefined' ? null : sessionStorage;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Attempts a real write. Private browsing, disabled storage, and quota
  * exhaustion all surface as a throw rather than a falsy object, so probing by

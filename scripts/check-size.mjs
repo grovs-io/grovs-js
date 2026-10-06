@@ -23,7 +23,9 @@ const FILE = 'dist/grovs.global.js';
 // bridge.js is injected into every page, so it ships inside the bundle (about
 // 1.9 KB gzipped), and the frame and the four layouts add about 1.5 KB.
 // 30.3 KB before, 33.5 KB after.
-const BUDGET_BYTES = 36 * 1024;
+//
+// Raised to 39 KB when the smart banner merged in: its 3 KB on top of the 36.
+const BUDGET_BYTES = 39 * 1024;
 
 try {
   statSync(FILE);
