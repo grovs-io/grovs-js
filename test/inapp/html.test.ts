@@ -24,6 +24,13 @@ describe('html template', () => {
     expect(readCampaign(merge(HTML, { content: { layout: 'full' } }))?.content.layout).toBe('full');
   });
 
+  it('reads the orientation on a page too, absent and any being null', () => {
+    expect(readCampaign(merge(HTML, { content: { orientation: 'landscape' } }))?.content.orientation).toBe('landscape');
+    expect(readCampaign(merge(HTML, { content: { orientation: 'any' } }))?.content.orientation).toBeNull();
+    expect(readCampaign(HTML)?.content.orientation).toBeNull();
+    expect(readCampaign(merge(HTML, { content: { orientation: 'sideways' } }))).toBeNull();
+  });
+
   it('keeps the layout of other templates null', () => {
     expect(readCampaign(BASE)?.content.layout).toBeNull();
   });

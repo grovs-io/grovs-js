@@ -27,9 +27,15 @@ export function webDevice(appVersion: string, user: Record<string, unknown> | nu
     utcOffsetMinutes: -new Date().getTimezoneOffset(),
     user: user ?? {},
     pushPermission: 'not_asked',
+    orientation: portrait() ? 'portrait' : 'landscape',
     unsupportedTemplates: [],
     unsupportedActions: UNSUPPORTED_ACTIONS,
   };
+}
+
+/** Desktop browsers are usually landscape; without matchMedia, portrait. */
+export function portrait(): boolean {
+  return getWindow()?.matchMedia?.('(orientation: portrait)').matches !== false;
 }
 
 export function loadImage(url: string): Promise<boolean> {
@@ -51,12 +57,25 @@ export function isVisible(): boolean {
 export class WebPresenter implements Presenter {
   private renderer: InAppRenderer | null = null;
 
-  constructor(private readonly logger: Logger) {}
+  constructor(
+    private readonly logger: Logger,
+    private readonly leaving: () => void,
+  ) {}
 
   present(presentation: Presentation, drawn: () => void, answered: Answered, commented: Commented): Promise<Outcome> {
     const doc = getDocument();
     if (!doc) return Promise.reject(new Error('no document'));
-    this.renderer ??= new InAppRenderer(doc, this.logger, (url) => getWindow()?.location.assign(url));
+    // Next task: the click is reported first; then send the queue, as WebKit may fire no pagehide on the way out.
+    this.renderer ??= new InAppRenderer(doc, this.logger, (url) =>
+      setTimeout(() => {
+        this.leaving();
+        try {
+          getWindow()?.location.assign(url);
+        } catch (error) {
+          this.logger.warn(`In-app link could not be opened: ${String(error)}`);
+        }
+      }),
+    );
     return this.renderer.present(presentation, drawn, answered, commented);
   }
 

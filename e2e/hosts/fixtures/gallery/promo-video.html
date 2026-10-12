@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="grovs-layout" content="modal">
+<meta name="theme-color" content="#160A14">
+<title>Promo video</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #FFFFFF;
+    --text: #0F172A;
+    --muted: #475569;
+    --soft: #F1F5F9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0B1220; --text: #F1F5F9; --muted: #94A3B8; --soft: #16213A; }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -webkit-text-size-adjust: 100%;
+  }
+  .media {
+    position: relative;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    background: radial-gradient(120% 90% at 30% 20%, #3B1730 0%, #160A14 60%, #0B0710 100%);
+  }
+  .media video { position: relative; display: block; width: 100%; height: 100%; object-fit: cover; }
+  .media::after {
+    content: "";
+    position: absolute;
+    inset: auto 0 0 0;
+    height: 40%;
+    background: linear-gradient(to top, rgba(0, 0, 0, .35), transparent);
+    pointer-events: none;
+  }
+  .sound {
+    position: absolute;
+    left: calc(12px + env(safe-area-inset-left));
+    bottom: 12px;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 36px;
+    padding: 0 14px 0 12px;
+    border: 0;
+    border-radius: 999px;
+    background: rgba(15, 23, 42, .55);
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    color: #FFFFFF;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .sound::before { content: ""; position: absolute; inset: -4px; }
+  .sound svg { width: 16px; height: 16px; }
+  main { padding: 20px calc(24px + env(safe-area-inset-right)) calc(22px + env(safe-area-inset-bottom)) calc(24px + env(safe-area-inset-left)); }
+  .chip {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: rgba(225, 29, 72, .12);
+    background: color-mix(in srgb, var(--brand) 14%, transparent);
+    color: var(--brand);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .02em;
+  }
+  @media (prefers-color-scheme: dark) {
+    .chip { color: color-mix(in srgb, var(--brand) 65%, #FFFFFF); }
+  }
+  h1 { margin: 12px 0 6px; font-size: 22px; line-height: 1.25; letter-spacing: -.01em; }
+  p { margin: 0; color: var(--muted); }
+  .actions { display: grid; gap: 8px; margin-top: 20px; }
+  .btn {
+    appearance: none;
+    width: 100%;
+    min-height: 48px;
+    padding: 12px 20px;
+    border: 0;
+    border-radius: 14px;
+    font: inherit;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: transform .12s ease, filter .12s ease;
+  }
+  .btn:active { transform: scale(.98); }
+  .primary {
+    background: var(--brand);
+    color: #FFFFFF;
+    box-shadow: 0 8px 20px -10px var(--brand);
+  }
+  .primary:hover { filter: brightness(1.06); }
+  .ghost { background: transparent; color: var(--muted); }
+  .ghost:hover { background: var(--soft); }
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+  /* A phone on its side: a shorter video, or the video beside the words, so the headline and buttons are in view. */
+  @media (orientation: landscape) and (max-height: 500px) and (max-width: 1000px) {
+    .media { aspect-ratio: auto; height: 120px; }
+    main { padding-top: 14px; }
+    h1 { margin: 8px 0 4px; font-size: 20px; }
+    .actions { grid-auto-flow: column; grid-auto-columns: 1fr; margin-top: 14px; }
+  }
+  @media (orientation: landscape) and (max-height: 500px) and (min-width: 600px) and (max-width: 1000px) {
+    body { display: flex; }
+    .media { flex: 1 1 50%; height: auto; min-height: 200px; }
+    .media video { position: absolute; inset: 0; }
+    .sound { bottom: calc(12px + env(safe-area-inset-bottom)); }
+    main { flex: 1 1 50%; align-self: center; padding-left: 24px; padding-right: calc(48px + env(safe-area-inset-right)); }
+  }
+  /* Full screen on its side: the video fills its column, the words centred clear of the close button; fixed and transform keep the measured height. */
+  @media (orientation: landscape) and (min-height: 301px) and (max-height: 500px) and (min-width: 600px) and (max-width: 1000px) {
+    .media { position: fixed; top: 0; bottom: 0; left: 0; width: 50%; min-height: 0; }
+    main { margin-left: 50%; align-self: flex-start; padding-top: calc(48px + env(safe-area-inset-top)); padding-right: calc(48px + env(safe-area-inset-right)); transform: translateY(max(0px, calc(50vh - 50%))); }
+  }
+</style>
+</head>
+<body data-grovs-edit-color="--brand" style="--brand: #E11D48">
+  <div class="media">
+    <video data-grovs-edit="Video: replace with your own" src="https://s3.eu-north-1.amazonaws.com/grovs.io/grovs-test-video.mp4" poster="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 960 540'%3E%3Cdefs%3E%3CradialGradient id='g' cx='.3' cy='.25' r='.9'%3E%3Cstop offset='0' stop-color='%235B1A3C'/%3E%3Cstop offset='.6' stop-color='%231E0B18'/%3E%3Cstop offset='1' stop-color='%230B0710'/%3E%3C/radialGradient%3E%3CradialGradient id='h' cx='.75' cy='.8' r='.5'%3E%3Cstop offset='0' stop-color='%23E11D48' stop-opacity='.45'/%3E%3Cstop offset='1' stop-color='%23E11D48' stop-opacity='0'/%3E%3C/radialGradient%3E%3C/defs%3E%3Crect width='960' height='540' fill='url(%23g)'/%3E%3Crect width='960' height='540' fill='url(%23h)'/%3E%3Ccircle cx='480' cy='270' r='54' fill='%23FFFFFF' fill-opacity='.92'/%3E%3Cpath d='M462 240v60l50-30z' fill='%231E0B18'/%3E%3C/svg%3E" width="960" height="540" autoplay muted loop playsinline preload="auto"></video>
+    <button type="button" class="sound" id="sound">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5Z"/><path id="waves" d="m22 9-6 6m0-6 6 6"/></svg>
+      <span id="sound-label">Sound on</span>
+    </button>
+  </div>
+  <main>
+    <span class="chip" data-grovs-edit="Label">New in 3.0</span>
+    <h1 data-grovs-edit="Headline">Edit videos right on your phone</h1>
+    <p data-grovs-edit="Text">Trim, add music and share in seconds. Here is a quick look at what you can make.</p>
+    <div class="actions">
+      <button type="button" class="btn primary" data-grovs-edit="Main button" data-grovs-action="open" data-grovs-url="https://example.com/whats-new">Try it now</button>
+      <button type="button" class="btn ghost" data-grovs-edit="Dismiss button" data-grovs-action="close">Maybe later</button>
+    </div>
+  </main>
+  <script>
+    (function () {
+      var video = document.querySelector("video");
+      var sound = document.getElementById("sound");
+      var waves = document.getElementById("waves");
+      var label = document.getElementById("sound-label");
+      sound.addEventListener("click", function () {
+        video.muted = !video.muted;
+        if (!video.muted) video.play();
+        label.textContent = video.muted ? "Sound on" : "Sound off";
+        waves.setAttribute("d", video.muted ? "m22 9-6 6m0-6 6 6" : "M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14");
+      });
+    })();
+  </script>
+</body>
+</html>

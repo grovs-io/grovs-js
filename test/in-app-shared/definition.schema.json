@@ -355,6 +355,14 @@
         "dismissible": {
           "type": "boolean"
         },
+        "orientation": {
+          "type": "string",
+          "enum": [
+            "any",
+            "portrait",
+            "landscape"
+          ]
+        },
         "question": {
           "oneOf": [
             {
@@ -399,6 +407,11 @@
               "type": "object"
             }
           }
+        },
+        {
+          "required": [
+            "html"
+          ]
         }
       ],
       "oneOf": [

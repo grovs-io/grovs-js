@@ -94,6 +94,7 @@ export function deviceOf(raw: Json): Device {
     utcOffsetMinutes: Number(raw.utc_offset_minutes ?? 0),
     user: (raw.user as Json | undefined) ?? {},
     pushPermission: (raw.push_permission as PushPermission | undefined) ?? 'not_asked',
+    orientation: raw.orientation === 'landscape' ? 'landscape' : 'portrait',
     unsupportedTemplates: (raw.unsupported_templates as string[] | undefined) ?? [],
     unsupportedActions: (raw.unsupported_actions as string[] | undefined) ?? [],
   };

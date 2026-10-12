@@ -130,6 +130,7 @@ function harness(storage = new FakeStorage(), clock = new FakeClock(START), extr
       utcOffsetMinutes: 0,
       user: state.user,
       pushPermission: 'not_asked',
+      orientation: 'portrait',
       unsupportedTemplates: [],
       unsupportedActions: ['request_push_permission', 'request_app_rating'],
     }),

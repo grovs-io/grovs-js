@@ -142,13 +142,17 @@ function readQuestion(value: unknown): Question | null {
 
 function readContent(value: unknown, template: string): Content | null {
   if (!isObject(value)) return null;
+  const { orientation: turn = 'any' } = value;
+  // Absent or any shows either way; an orientation this engine doesn't know makes it unreadable.
+  if (turn !== 'any' && turn !== 'portrait' && turn !== 'landscape') return null;
+  const orientation = turn === 'any' ? null : turn;
   // The SDK always draws its own close control on a page, so dismissible: false cannot trap anyone.
   if (template === 'html') {
     // Native fields left over from an earlier template are never drawn, so they are not read.
     const { html, layout, dismissible = true } = value;
     if (typeof html !== 'string' || typeof layout !== 'string' || !LAYOUTS.includes(layout)) return null;
     if (typeof dismissible !== 'boolean') return null;
-    return { title: null, message: null, buttons: [], tapAction: null, dismissible, question: null, layout: layout as Layout };
+    return { title: null, message: null, buttons: [], tapAction: null, dismissible, question: null, layout: layout as Layout, orientation };
   }
   const { title, message } = value;
   if (title !== null && typeof title !== 'string') return null;
@@ -165,7 +169,7 @@ function readContent(value: unknown, template: string): Content | null {
   if (asks && (!question || buttons.length > 0 || tapAction !== null)) return null;
   // A message nobody can dismiss must offer something to tap, or it would hold the screen for ever.
   if (!dismissible && buttons.length === 0 && tapAction === null && !question) return null;
-  return { title, message, buttons, tapAction, dismissible, question, layout: null };
+  return { title, message, buttons, tapAction, dismissible, question, layout: null, orientation };
 }
 
 function readComparison(value: Raw): Comparison | null {

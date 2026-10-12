@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- In-app orientation: a campaign can be for portrait or landscape only. It shows only while the
+  screen is held that way and closes if it turns, reported to `onDismissed` with reason
+  `orientation`, which the dashboard does not count as a dismissal. On the web, a browser window
+  wider than it is tall counts as landscape.
+
+### Changed
+
+- In-app HTML banners may take up to 45% of a short screen (500px or less, like a phone on its
+  side), up from 30%.
+- In-app HTML: `grovs.open()` (and a link) opens only within 2 seconds of a tap in the message;
+  later, for example after a slow network call, it is ignored.
+
 ## 2.1.0 — 2026-10-06
 
 ### Added

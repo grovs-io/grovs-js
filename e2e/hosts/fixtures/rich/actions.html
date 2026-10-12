@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { color-scheme: light dark; --bg: #FFFFFF; --text: #0F172A; --muted: #475569; --edge: #E2E8F0; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #0B1220; --text: #F1F5F9; --muted: #94A3B8; --edge: #1E293B; } }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--bg); color: var(--text); font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  .btn { appearance: none; display: block; width: 100%; min-height: 48px; margin-top: 12px; padding: 12px 20px; border: 0; border-radius: 14px;
+    background: #4F46E5; color: #FFFFFF; font: inherit; font-weight: 600; cursor: pointer; }
+  header { padding: 24px 56px 16px 20px; background: #0F766E; color: #FFFFFF; }
+  header h1 { margin: 0 0 8px; font-size: 24px; }
+  section { min-height: 220px; padding: 16px 20px; border-bottom: 1px solid var(--edge); }
+  section h2 { margin: 0 0 8px; font-size: 18px; }
+  section p { margin: 0 0 8px; color: var(--muted); }
+  a.btn { text-align: center; text-decoration: none; box-sizing: border-box; }
+  .status { margin-top: 6px; font-weight: 600; color: var(--text); }
+  footer { padding: 24px 20px 24px; }
+  #end { margin: 16px 0 0; padding: 12px; border: 2px solid #0F766E; border-radius: 10px; text-align: center; font-weight: 700; }
+</style>
+</head>
+<body>
+  <header id="top">
+    <h1>zz-qa actions top</h1>
+    <button type="button" class="btn" id="b-track1">zz-qa track one</button>
+    <p class="status" id="s-track1">zz-qa track one waiting</p>
+  </header>
+  <section id="sec-1">
+    <h2>Section 1</h2>
+    <p>Filler 1.1: text that pushes the next button further down the page.</p>
+    <p>Filler 1.2: text that pushes the next button further down the page.</p>
+    <p>Filler 1.3: text that pushes the next button further down the page.</p>
+    <p>Filler 1.4: text that pushes the next button further down the page.</p>
+  </section>
+  <section id="sec-2">
+    <h2>Section 2</h2>
+    <p>Filler 2.1: text that pushes the next button further down the page.</p>
+    <p>Filler 2.2: text that pushes the next button further down the page.</p>
+    <p>Filler 2.3: text that pushes the next button further down the page.</p>
+    <p>Filler 2.4: text that pushes the next button further down the page.</p>
+    <button type="button" class="btn" id="b-open-js">zz-qa open by script</button>
+  </section>
+  <section id="sec-3">
+    <h2>Section 3</h2>
+    <p>Filler 3.1: text that pushes the next button further down the page.</p>
+    <p>Filler 3.2: text that pushes the next button further down the page.</p>
+    <p>Filler 3.3: text that pushes the next button further down the page.</p>
+    <p>Filler 3.4: text that pushes the next button further down the page.</p>
+  </section>
+  <section id="sec-4">
+    <h2>Section 4</h2>
+    <p>Filler 4.1: text that pushes the next button further down the page.</p>
+    <p>Filler 4.2: text that pushes the next button further down the page.</p>
+    <p>Filler 4.3: text that pushes the next button further down the page.</p>
+    <p>Filler 4.4: text that pushes the next button further down the page.</p>
+    <button type="button" class="btn" id="b-attr">zz-qa set attribute</button>
+    <p class="status" id="s-attr">zz-qa attribute waiting</p>
+  </section>
+  <section id="sec-5">
+    <h2>Section 5</h2>
+    <p>Filler 5.1: text that pushes the next button further down the page.</p>
+    <p>Filler 5.2: text that pushes the next button further down the page.</p>
+    <p>Filler 5.3: text that pushes the next button further down the page.</p>
+    <p>Filler 5.4: text that pushes the next button further down the page.</p>
+    <a class="btn" id="b-jump" href="#sec-11">zz-qa jump down</a>
+  </section>
+  <section id="sec-6">
+    <h2>Section 6</h2>
+    <p>Filler 6.1: text that pushes the next button further down the page.</p>
+    <p>Filler 6.2: text that pushes the next button further down the page.</p>
+    <p>Filler 6.3: text that pushes the next button further down the page.</p>
+    <p>Filler 6.4: text that pushes the next button further down the page.</p>
+    <button type="button" class="btn" id="b-track2" data-grovs-action="track" data-grovs-event="zz_qa_rich_2_TAG">zz-qa track two</button>
+    <p class="status" id="s-track2">zz-qa track two waiting</p>
+  </section>
+  <section id="sec-7">
+    <h2>Section 7</h2>
+    <p>Filler 7.1: text that pushes the next button further down the page.</p>
+    <p>Filler 7.2: text that pushes the next button further down the page.</p>
+    <p>Filler 7.3: text that pushes the next button further down the page.</p>
+    <p>Filler 7.4: text that pushes the next button further down the page.</p>
+    <button type="button" class="btn" id="b-close-js">zz-qa close by script</button>
+  </section>
+  <section id="sec-8">
+    <h2>Section 8</h2>
+    <p>Filler 8.1: text that pushes the next button further down the page.</p>
+    <p>Filler 8.2: text that pushes the next button further down the page.</p>
+    <p>Filler 8.3: text that pushes the next button further down the page.</p>
+    <p>Filler 8.4: text that pushes the next button further down the page.</p>
+    <button type="button" class="btn" id="b-push">zz-qa ask push</button>
+    <p class="status" id="s-push">zz-qa push waiting</p>
+  </section>
+  <section id="sec-9">
+    <h2>Section 9</h2>
+    <p>Filler 9.1: text that pushes the next button further down the page.</p>
+    <p>Filler 9.2: text that pushes the next button further down the page.</p>
+    <p>Filler 9.3: text that pushes the next button further down the page.</p>
+    <p>Filler 9.4: text that pushes the next button further down the page.</p>
+    <button type="button" class="btn" id="b-open-data" data-grovs-action="open" data-grovs-url="https://example.com/zz-qa-open-data">zz-qa open by attribute</button>
+  </section>
+  <section id="sec-10">
+    <h2>Section 10</h2>
+    <p>Filler 10.1: text that pushes the next button further down the page.</p>
+    <p>Filler 10.2: text that pushes the next button further down the page.</p>
+    <p>Filler 10.3: text that pushes the next button further down the page.</p>
+    <p>Filler 10.4: text that pushes the next button further down the page.</p>
+  </section>
+  <section id="sec-11">
+    <h2>Section 11</h2>
+    <p class="status">zz-qa jump target</p>
+    <p>Filler 11.1: text that pushes the next button further down the page.</p>
+    <p>Filler 11.2: text that pushes the next button further down the page.</p>
+    <p>Filler 11.3: text that pushes the next button further down the page.</p>
+    <p>Filler 11.4: text that pushes the next button further down the page.</p>
+  </section>
+  <section id="sec-12">
+    <h2>Section 12</h2>
+    <p>Filler 12.1: text that pushes the next button further down the page.</p>
+    <p>Filler 12.2: text that pushes the next button further down the page.</p>
+    <p>Filler 12.3: text that pushes the next button further down the page.</p>
+    <p>Filler 12.4: text that pushes the next button further down the page.</p>
+    <a class="btn" id="b-link" href="https://example.com/zz-qa-link">zz-qa plain link</a>
+  </section>
+  <footer>
+    <button type="button" class="btn" id="b-close-data" data-grovs-action="close">zz-qa close by attribute</button>
+    <p id="end">zz-qa page end</p>
+  </footer>
+  <script>
+    (function () {
+      function status(id, text) { document.getElementById(id).textContent = text; }
+      function on(id, run) { document.getElementById(id).addEventListener("click", run); }
+      on("b-track1", function () {
+        grovs.track("zz_qa_rich_1_TAG", { n: 1, where: "top", ok: true });
+        status("s-track1", "zz-qa did track one");
+      });
+      on("b-open-js", function () { grovs.open("https://example.com/zz-qa-open-js"); });
+      on("b-attr", function () {
+        grovs.setAttribute("zz_qa_attr", "TAG");
+        status("s-attr", "zz-qa did set attribute");
+      });
+      on("b-track2", function () { status("s-track2", "zz-qa did track two"); });
+      on("b-close-js", function () { grovs.close(); });
+      on("b-push", function () {
+        status("s-push", "zz-qa push asked");
+        grovs.requestPushPermission().then(function (result) {
+          status("s-push", "zz-qa push " + result);
+        }, function (error) {
+          status("s-push", "zz-qa push failed " + (error && error.message));
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

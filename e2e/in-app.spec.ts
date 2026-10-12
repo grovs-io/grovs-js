@@ -163,6 +163,52 @@ test.describe('in-app messages', () => {
     expect(backend.named('in_app_clicked')[0]?.['properties']).toMatchObject({ button_id: 'shop', action: 'key_value' });
   });
 
+  test('a link that navigates away sends what is queued before it leaves, an earlier showing\'s too', async ({ page }) => {
+    await page.route('https://acme.example/**', (route) => route.fulfill({ contentType: 'text/html', body: 'landed' }));
+    backend.campaigns = [
+      campaign({
+        content: {
+          buttons: [
+            { id: 'go', text: 'Go', action: { type: 'open_url', url: 'https://acme.example/landing' } },
+            { id: 'no', text: 'No', action: { type: 'close' } },
+          ],
+        },
+      }),
+    ];
+    await configure(page, backend);
+    await page.waitForFunction(() => Object.keys(localStorage).some((key) => key.startsWith('grovs_in_app:')));
+    await page.evaluate(() => (window as unknown as Host).Grovs.track('cart_viewed'));
+    await page.getByRole('dialog').getByRole('button', { name: 'No' }).click();
+    await page.evaluate(() => (window as unknown as Host).Grovs.track('cart_viewed'));
+    await page.getByRole('dialog').getByRole('button', { name: 'Go' }).click();
+    await page.waitForURL('https://acme.example/landing');
+    // Not back on the host: WebKit fires no pagehide here, so only a send before leaving counts.
+    await expect.poll(() => backend.named('in_app_clicked').length).toBe(2);
+    expect(backend.named('in_app_viewed')).toHaveLength(2);
+    expect(backend.named('in_app_clicked').map((event) => (event['properties'] as Json)['button_id'])).toEqual(['no', 'go']);
+  });
+
+  test('a portrait-only message waits for portrait, and closes when the device turns', async ({ page }) => {
+    backend.campaigns = [campaign({ content: { orientation: 'portrait' } })];
+    await page.setViewportSize({ width: 844, height: 390 });
+    await configure(page, backend);
+
+    await page.evaluate(() => (window as unknown as Host).Grovs.track('cart_viewed'));
+    await page.waitForTimeout(300);
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.evaluate(() => (window as unknown as Host).Grovs.track('cart_viewed'));
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    await page.setViewportSize({ width: 844, height: 390 });
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await page.evaluate(() => (window as unknown as Host).Grovs.flush());
+    await expect.poll(() => backend.named('in_app_dismissed').length).toBe(1);
+    expect(backend.named('in_app_viewed')).toHaveLength(1);
+    expect(backend.named('in_app_dismissed')[0]?.['properties']).toMatchObject({ campaign_id: 'c1', reason: 'orientation' });
+  });
+
   test('closes on Escape and on the close button, and reports the dismissal', async ({ page }) => {
     backend.campaigns = [campaign({ caps: { session: null } })];
     await configure(page, backend);
@@ -511,6 +557,32 @@ test.describe('html messages', () => {
     await page.waitForURL('https://acme.example/landing');
   });
 
+  test('a page shown by a click on the host that opens a link by itself does not navigate; a click inside does', async ({ page }) => {
+    await page.route('https://acme.example/**', (route) => route.fulfill({ contentType: 'text/html', body: 'landed' }));
+    backend.campaigns = [
+      html(
+        '<!doctype html><script>grovs.open("https://acme.example/load");' +
+          '[300, 1000, 2000].forEach(function (t) { setTimeout(function () { grovs.open("https://acme.example/auto"); }, t); })</script>' +
+          '<button id="go" onclick="grovs.open(\'https://acme.example/landing\')">Go</button>',
+      ),
+    ];
+    await ready(page);
+    await page.evaluate(() => {
+      const button = document.createElement('button');
+      button.id = 'host-trigger';
+      button.textContent = 'Trigger';
+      button.onclick = () => (window as unknown as Host).Grovs.track('cart_viewed');
+      document.body.appendChild(button);
+    });
+    await page.click('#host-trigger');
+    await expect(shown(page)).toBeVisible();
+    await page.waitForTimeout(2500);
+    expect(page.url()).toContain('/e2e/iife.html');
+    await expect(shown(page)).toBeVisible();
+    await messageFrame(page).click('#go');
+    await page.waitForURL('https://acme.example/landing');
+  });
+
   test('a page forging activation through call, apply or isActive does not navigate; a click does', async ({ page, browserName }) => {
     test.skip(!(await page.evaluate(() => 'userActivation' in navigator)), 'no navigator.userActivation');
     // Firefox lends the host page's activation (Playwright's evaluate) to frames for ~5 s; Chromium and WebKit do not.
@@ -598,6 +670,15 @@ test.describe('html messages', () => {
     await expect(host(page)).toHaveCount(0, { timeout: 6000 });
     await flush(page);
     expect(backend.named('in_app_viewed')).toHaveLength(0);
+  });
+
+  test('a banner on a short screen, like a phone on its side, may take 45% of it', async ({ page }) => {
+    backend.campaigns = [html('<!doctype html><body style="margin:0"><div style="height:3000px">Tall</div></body>', 'banner_bottom')];
+    await page.setViewportSize({ width: 844, height: 390 });
+    await ready(page);
+    await track(page);
+    await expect(shown(page)).toBeVisible();
+    await expect.poll(async () => Math.round((await frameBox(page))?.height ?? 0)).toBe(Math.round(390 * 0.45));
   });
 
   test('a tall page is clamped to its layout, and a 100%-high page holds the largest card', async ({ page }) => {

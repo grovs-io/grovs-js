@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { color-scheme: light dark; --bg: #FFFFFF; --text: #0F172A; --muted: #475569; --edge: #E2E8F0; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #0B1220; --text: #F1F5F9; --muted: #94A3B8; --edge: #1E293B; } }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--bg); color: var(--text); font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  .btn { appearance: none; display: block; width: 100%; min-height: 48px; margin-top: 12px; padding: 12px 20px; border: 0; border-radius: 14px;
+    background: #4F46E5; color: #FFFFFF; font: inherit; font-weight: 600; cursor: pointer; }
+  main { padding: 16px 20px 20px; }
+  video { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; background: #333; }
+</style>
+</head>
+<body>
+  <video id="v" src="https://s3.eu-north-1.amazonaws.com/grovs.io/zz-qa-missing.mp4" autoplay muted loop playsinline controls width="960" height="540"></video>
+  <main>
+    <h1>zz-qa broken video title</h1>
+    <p>zz-qa the rest of the message still shows</p>
+    <p id="s" data-state="waiting">zz-qa video waiting</p>
+    <button type="button" class="btn" data-grovs-action="close">zz-qa broken done</button>
+  </main>
+  <script>
+    document.getElementById("v").addEventListener("error", function () {
+      var s = document.getElementById("s");
+      s.setAttribute("data-state", "error");
+      s.textContent = "zz-qa video error";
+    });
+  </script>
+</body>
+</html>

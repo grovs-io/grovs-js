@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="grovs-layout" content="modal">
+<meta name="theme-color" content="#D7E9E4" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0A2229" media="(prefers-color-scheme: dark)">
+<title>Win-back offer</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #FFFFFF;
+    --text: #0F172A;
+    --muted: #475569;
+    --soft: #F1F5F9;
+    --surface: #FFFFFF;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0B1220; --text: #F1F5F9; --muted: #94A3B8; --soft: #16213A; --surface: #1B2740; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -webkit-text-size-adjust: 100%;
+  }
+  .top {
+    display: grid;
+    place-items: center;
+    padding: calc(28px + env(safe-area-inset-top)) calc(24px + env(safe-area-inset-right)) 4px calc(24px + env(safe-area-inset-left));
+    background: linear-gradient(to bottom, rgba(4, 120, 87, .12), transparent);
+    background: linear-gradient(to bottom, color-mix(in srgb, var(--brand) 16%, transparent), transparent);
+  }
+  .art { width: 112px; height: 96px; }
+  .fb { fill: var(--brand); }
+  .fd { fill: color-mix(in srgb, var(--brand) 75%, #000000); }
+  .fs { fill: var(--surface); }
+  main { padding: 12px calc(24px + env(safe-area-inset-right)) calc(22px + env(safe-area-inset-bottom)) calc(24px + env(safe-area-inset-left)); text-align: center; }
+  h1 { margin: 0 0 6px; font-size: 22px; line-height: 1.25; letter-spacing: -.01em; }
+  .lead { margin: 0; color: var(--muted); }
+  .coupon {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 18px;
+    padding: 10px 10px 10px 16px;
+    border: 1.5px dashed var(--brand);
+    border-radius: 16px;
+    background: rgba(4, 120, 87, .06);
+    background: color-mix(in srgb, var(--brand) 7%, transparent);
+    text-align: left;
+  }
+  .coupon .label { display: block; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+  .code {
+    display: block;
+    font: 700 20px/1.3 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    letter-spacing: .08em;
+    -webkit-user-select: all;
+    user-select: all;
+  }
+  .copy {
+    appearance: none;
+    flex: none;
+    margin-left: auto;
+    min-width: 84px;
+    min-height: 40px;
+    padding: 8px 14px;
+    border: 0;
+    border-radius: 12px;
+    background: var(--surface);
+    color: var(--text);
+    box-shadow: 0 1px 2px rgba(15, 23, 42, .12), inset 0 0 0 1px rgba(15, 23, 42, .08);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: background .15s ease, color .15s ease;
+  }
+  .copy.done { background: var(--brand); color: #FFFFFF; box-shadow: none; }
+  .actions { display: grid; gap: 8px; margin-top: 18px; }
+  .btn {
+    appearance: none;
+    width: 100%;
+    min-height: 48px;
+    padding: 12px 20px;
+    border: 0;
+    border-radius: 14px;
+    font: inherit;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: transform .12s ease, filter .12s ease;
+  }
+  .btn:active { transform: scale(.98); }
+  .primary { background: var(--brand); color: #FFFFFF; box-shadow: 0 8px 20px -10px var(--brand); }
+  .primary:hover { filter: brightness(1.06); }
+  .ghost { background: transparent; color: var(--muted); }
+  .ghost:hover { background: var(--soft); }
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+  /* A phone on its side: tighter, so the headline and buttons are in view. */
+  @media (orientation: landscape) and (max-height: 500px) and (max-width: 1000px) {
+    .top { padding-top: calc(12px + env(safe-area-inset-top)); }
+    .art { width: 72px; height: 62px; }
+    h1 { font-size: 20px; }
+    .coupon { margin-top: 12px; padding: 6px 6px 6px 14px; }
+    .actions { grid-auto-flow: column; grid-auto-columns: 1fr; margin-top: 12px; }
+  }
+  /* Full screen on its side: centred top to bottom (a transform keeps the measured height); the shadow carries the tint to the top edge. */
+  @media (orientation: landscape) and (min-height: 301px) and (max-height: 500px) and (max-width: 1000px) {
+    body { transform: translateY(max(0px, calc(50vh - 50%))); }
+    .top { box-shadow: 0 -100vh 0 100vh color-mix(in srgb, var(--brand) 16%, transparent); }
+  }
+</style>
+</head>
+<body data-grovs-edit-color="--brand" style="--brand: #047857">
+  <div class="top" aria-hidden="true">
+    <svg class="art" viewBox="0 0 112 96">
+      <rect class="fd" x="14" y="38" width="84" height="54" rx="10"/>
+      <rect class="fb" x="8" y="26" width="96" height="22" rx="8"/>
+      <rect class="fs" x="50" y="26" width="12" height="66" opacity=".9"/>
+      <path class="fb" d="M56 26c-6-14-26-18-26-6 0 7 12 8 26 6Zm0 0c6-14 26-18 26-6 0 7-12 8-26 6Z"/>
+      <path class="fs" d="M88 6l2.4 5.6L96 14l-5.6 2.4L88 22l-2.4-5.6L80 14l5.6-2.4Z"/>
+      <circle class="fb" cx="20" cy="10" r="3"/>
+      <circle class="fb" cx="102" cy="40" r="2.5" opacity=".6"/>
+    </svg>
+  </div>
+  <main>
+    <h1 data-grovs-edit="Headline">We miss you, {{ user.first_name | default: "friend" }}</h1>
+    <p class="lead" data-grovs-edit="Text">Come back to 25% off your next order. Your code is good for 7 days.</p>
+    <div class="coupon">
+      <div>
+        <span class="label">Your code</span>
+        <span class="code" id="code" data-grovs-edit="Code">COMEBACK25</span>
+      </div>
+      <button type="button" class="copy" id="copy" data-grovs-edit="Copy button">Copy</button>
+    </div>
+    <div class="actions">
+      <button type="button" class="btn primary" data-grovs-edit="Main button" data-grovs-action="open" data-grovs-url="https://example.com/shop">Shop now</button>
+      <button type="button" class="btn ghost" data-grovs-edit="Dismiss button" data-grovs-action="close">No thanks</button>
+    </div>
+  </main>
+  <script>
+    (function () {
+      var copy = document.getElementById("copy");
+      var code = document.getElementById("code");
+      var label = copy.textContent;
+      var timer = 0;
+      function show(text, done) {
+        copy.textContent = text;
+        copy.classList.toggle("done", done);
+        clearTimeout(timer);
+        timer = setTimeout(function () {
+          copy.textContent = label;
+          copy.classList.remove("done");
+        }, 2500);
+      }
+      function copied() {
+        show("Copied", true);
+        grovs.track("winback_code_copied");
+      }
+      // Selecting and copying also works where the clipboard API is blocked, as in a sandboxed frame.
+      function select() {
+        var range = document.createRange();
+        range.selectNodeContents(code);
+        var selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+        var done = false;
+        try {
+          done = document.execCommand("copy");
+        } catch (e) {}
+        // The code stays selected, so it can still be copied by hand.
+        if (done) copied();
+        else show("Selected", false);
+      }
+      copy.addEventListener("click", function () {
+        var text = code.textContent.trim();
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(copied, select);
+        else select();
+      });
+    })();
+  </script>
+</body>
+</html>

@@ -15,6 +15,14 @@
   var descriptor = activation && Object.getOwnPropertyDescriptor(Object.getPrototypeOf(activation), "isActive");
   // Bound now, so a page replacing Function.prototype.call later can't answer for it.
   var isActive = descriptor ? descriptor.get.bind(activation) : null;
+  // A frame shown after a host click inherits that activation; a tap must happen in here.
+  var now = Date.now;
+  var tapped = -Infinity;
+  ["pointerdown", "keydown", "click"].forEach(function (type) {
+    w.addEventListener(type, function (e) {
+      if (e.isTrusted) tapped = now();
+    }, true);
+  });
   Reflect.deleteProperty(w, "__grovs");
   // The boot script's text holds the token; gone before the page's own scripts can read it.
   if (d.currentScript) d.currentScript.remove();
@@ -47,7 +55,7 @@
       post("track", { name: name, properties: properties == null ? {} : properties });
     },
     open: function (url) {
-      post("open", { url: url, active: isActive ? isActive() : true });
+      post("open", { url: url, active: now() - tapped < 2000 && (isActive ? isActive() : true) });
     },
     setAttribute: function (key, value) {
       post("setAttribute", { key: key, value: value });
@@ -170,6 +178,11 @@
     }).observe(d.documentElement);
   }
   w.addEventListener("load", measure);
+  // The app resets its frame on rotation, so even an unchanged height is posted again.
+  w.addEventListener("resize", function () {
+    last = 0;
+    frame = frame || requestAnimationFrame(measure);
+  });
   if (d.readyState === "loading") d.addEventListener("DOMContentLoaded", personalize);
   else personalize();
 })();

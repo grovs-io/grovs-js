@@ -207,6 +207,13 @@
             "denied",
             "not_asked"
           ]
+        },
+        "orientation": {
+          "type": "string",
+          "enum": [
+            "portrait",
+            "landscape"
+          ]
         }
       }
     },

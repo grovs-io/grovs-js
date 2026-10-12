@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="grovs-layout" content="full">
+<meta name="theme-color" content="#4F46E5">
+<title>Product launch</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #FFFFFF;
+    --text: #0F172A;
+    --muted: #475569;
+    --soft: #F1F5F9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0B1220; --text: #F1F5F9; --muted: #94A3B8; --soft: #16213A; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -webkit-text-size-adjust: 100%;
+  }
+  /* vh, not %, so the page measures its content and a banner settles at one height. */
+  .page { display: flex; flex-direction: column; min-height: 100vh; }
+  .hero { margin: 0; }
+  .hero img { display: block; width: 100%; height: auto; }
+  .content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: 480px;
+    margin: 0 auto;
+    padding: 24px calc(24px + env(safe-area-inset-right)) calc(20px + env(safe-area-inset-bottom)) calc(24px + env(safe-area-inset-left));
+  }
+  .eyebrow {
+    margin: 0;
+    color: var(--brand);
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+  @media (prefers-color-scheme: dark) {
+    .eyebrow { color: color-mix(in srgb, var(--brand) 60%, #FFFFFF); }
+  }
+  h1 { margin: 8px 0 8px; font-size: 28px; line-height: 1.15; letter-spacing: -.02em; }
+  .lead { margin: 0; color: var(--muted); }
+  ul { display: grid; gap: 12px; margin: 22px 0 0; padding: 0; list-style: none; }
+  li { position: relative; padding-left: 34px; font-weight: 500; }
+  li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 1px;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: rgba(79, 70, 229, .14);
+    background: color-mix(in srgb, var(--brand) 16%, transparent);
+  }
+  li::after {
+    content: "";
+    position: absolute;
+    left: 8px;
+    top: 6px;
+    width: 5px;
+    height: 10px;
+    border: solid var(--brand);
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+  }
+  .actions { display: grid; gap: 8px; margin-top: auto; padding-top: 28px; }
+  .btn {
+    appearance: none;
+    width: 100%;
+    min-height: 52px;
+    padding: 14px 20px;
+    border: 0;
+    border-radius: 16px;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: transform .12s ease, filter .12s ease;
+  }
+  .btn:active { transform: scale(.98); }
+  .primary { background: var(--brand); color: #FFFFFF; box-shadow: 0 10px 24px -12px var(--brand); }
+  .primary:hover { filter: brightness(1.06); }
+  .ghost { background: transparent; color: var(--muted); }
+  .ghost:hover { background: var(--soft); }
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+  @media (min-width: 820px), (orientation: landscape) and (max-height: 500px) and (min-width: 600px) {
+    .page { flex-direction: row; }
+    .hero { flex: 1 1 55%; position: relative; }
+    .hero img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+    .content { flex: 1 1 45%; justify-content: center; max-width: 520px; padding: calc(48px + env(safe-area-inset-top)) calc(56px + env(safe-area-inset-right)) calc(48px + env(safe-area-inset-bottom)) 56px; }
+    .actions { margin-top: 0; }
+    h1 { font-size: 34px; }
+  }
+  /* A phone on its side: tighter, with the picture beside the words, or shorter above them when narrow. */
+  @media (orientation: landscape) and (max-height: 500px) and (max-width: 1000px) {
+    .content { padding: calc(16px + env(safe-area-inset-top)) calc(24px + env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) calc(24px + env(safe-area-inset-left)); }
+    h1 { margin: 4px 0 6px; font-size: 24px; }
+    .lead { font-size: 15px; }
+    ul { gap: 6px; margin-top: 12px; }
+    .actions { grid-auto-flow: column; grid-auto-columns: 1fr; margin-top: 0; padding-top: 16px; }
+  }
+  @media (orientation: landscape) and (max-height: 500px) and (min-width: 600px) and (max-width: 1000px) {
+    .content { padding-left: 24px; }
+  }
+  /* A banner on its side: the words clear of the close button. */
+  @media (orientation: landscape) and (max-height: 300px) and (min-width: 600px) and (max-width: 1000px) {
+    .content { padding-right: calc(48px + env(safe-area-inset-right)); }
+  }
+  @media (orientation: landscape) and (max-height: 500px) and (max-width: 599px) {
+    .hero img { height: 120px; object-fit: cover; }
+    .content { max-width: none; }
+  }
+  /* Full screen only: the buttons above the points so they're in view; a banner keeps them last, clear of the close button. */
+  @media (orientation: landscape) and (min-height: 301px) and (max-height: 500px) and (max-width: 599px) {
+    ul { order: 1; }
+  }
+</style>
+</head>
+<body data-grovs-edit-color="--brand" style="--brand: #4F46E5">
+  <div class="page">
+    <figure class="hero">
+      <img data-grovs-edit="Hero image" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1200 800'%3E%3Cdefs%3E%3ClinearGradient id='b' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%234F46E5'/%3E%3Cstop offset='.55' stop-color='%237C3AED'/%3E%3Cstop offset='1' stop-color='%23C026D3'/%3E%3C/linearGradient%3E%3CradialGradient id='g1' cx='.2' cy='.15' r='.6'%3E%3Cstop offset='0' stop-color='%23FFFFFF' stop-opacity='.28'/%3E%3Cstop offset='1' stop-color='%23FFFFFF' stop-opacity='0'/%3E%3C/radialGradient%3E%3CradialGradient id='g2' cx='.9' cy='.95' r='.55'%3E%3Cstop offset='0' stop-color='%23F472B6' stop-opacity='.55'/%3E%3Cstop offset='1' stop-color='%23F472B6' stop-opacity='0'/%3E%3C/radialGradient%3E%3ClinearGradient id='t1' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23FDE68A'/%3E%3Cstop offset='1' stop-color='%23F59E0B'/%3E%3C/linearGradient%3E%3ClinearGradient id='t2' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23A7F3D0'/%3E%3Cstop offset='1' stop-color='%2310B981'/%3E%3C/linearGradient%3E%3ClinearGradient id='t3' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23BFDBFE'/%3E%3Cstop offset='1' stop-color='%233B82F6'/%3E%3C/linearGradient%3E%3ClinearGradient id='t4' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23FBCFE8'/%3E%3Cstop offset='1' stop-color='%23EC4899'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='1200' height='800' fill='url(%23b)'/%3E%3Crect width='1200' height='800' fill='url(%23g1)'/%3E%3Crect width='1200' height='800' fill='url(%23g2)'/%3E%3Cg fill='%23FFFFFF' opacity='.12'%3E%3Ccircle cx='1040' cy='150' r='90'/%3E%3Ccircle cx='150' cy='660' r='60'/%3E%3C/g%3E%3Cg transform='rotate(-6 600 430)'%3E%3Crect x='330' y='170' width='540' height='520' rx='40' fill='%23FFFFFF' opacity='.22'/%3E%3C/g%3E%3Crect x='350' y='150' width='500' height='540' rx='36' fill='%23FFFFFF'/%3E%3Crect x='390' y='190' width='200' height='22' rx='11' fill='%231E1B4B'/%3E%3Crect x='390' y='228' width='300' height='14' rx='7' fill='%23C7D2FE'/%3E%3Crect x='390' y='280' width='200' height='160' rx='22' fill='url(%23t1)'/%3E%3Crect x='610' y='280' width='200' height='160' rx='22' fill='url(%23t2)'/%3E%3Crect x='390' y='460' width='200' height='160' rx='22' fill='url(%23t3)'/%3E%3Crect x='610' y='460' width='200' height='160' rx='22' fill='url(%23t4)'/%3E%3Cg fill='%23FFFFFF' opacity='.9'%3E%3Crect x='410' y='404' width='96' height='14' rx='7'/%3E%3Crect x='630' y='404' width='120' height='14' rx='7'/%3E%3Crect x='410' y='584' width='110' height='14' rx='7'/%3E%3Crect x='630' y='584' width='84' height='14' rx='7'/%3E%3C/g%3E%3Cg transform='translate(800 150)'%3E%3Ccircle r='58' fill='%23FFFFFF'/%3E%3Cpath d='M0-30 8-8 30 0 8 8 0 30-8 8-30 0-8-8Z' fill='%237C3AED'/%3E%3Ccircle cx='24' cy='-24' r='6' fill='%23F472B6'/%3E%3C/g%3E%3Cg transform='translate(330 610)'%3E%3Crect x='-10' y='-34' width='210' height='68' rx='34' fill='%231E1B4B'/%3E%3Ccircle cx='26' cy='0' r='16' fill='%2334D399'/%3E%3Cpath d='m18 0 6 6 11-12' fill='none' stroke='%231E1B4B' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Crect x='56' y='-7' width='120' height='14' rx='7' fill='%23FFFFFF'/%3E%3C/g%3E%3C/svg%3E" width="1200" height="800" alt="">
+    </figure>
+    <main class="content">
+      <p class="eyebrow" data-grovs-edit="Label">Introducing</p>
+      <h1 data-grovs-edit="Headline">Smart Collections</h1>
+      <p class="lead" data-grovs-edit="Text">Everything you save now sorts itself. Collections group your favourites by trip, style and price, automatically.</p>
+      <ul>
+        <li data-grovs-edit="Point 1">Organised the moment you save</li>
+        <li data-grovs-edit="Point 2">Share a collection with one link</li>
+        <li data-grovs-edit="Point 3">Price-drop alerts for every item</li>
+      </ul>
+      <div class="actions">
+        <button type="button" class="btn primary" data-grovs-edit="Main button" data-grovs-action="open" data-grovs-url="https://example.com/collections">Try Collections</button>
+        <button type="button" class="btn ghost" data-grovs-edit="Dismiss button" data-grovs-action="close">Maybe later</button>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

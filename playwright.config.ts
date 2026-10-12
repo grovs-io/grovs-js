@@ -32,17 +32,17 @@ export default defineConfig({
     // No external backend needed, runs in verify.
     {
       name: 'chromium',
-      testIgnore: /live\.spec\.ts|smart-banner\.spec\.ts/,
+      testIgnore: /live\.spec\.ts|smart-banner\.spec\.ts|[\\/]hosts[\\/]/,
       use: { ...devices['Desktop Chrome'] },
     },
     {
       name: 'webkit',
-      testIgnore: /live\.spec\.ts|smart-banner\.spec\.ts/,
+      testIgnore: /live\.spec\.ts|smart-banner\.spec\.ts|[\\/]hosts[\\/]/,
       use: { ...devices['Desktop Safari'] },
     },
     {
       name: 'firefox',
-      testIgnore: /live\.spec\.ts|smart-banner\.spec\.ts/,
+      testIgnore: /live\.spec\.ts|smart-banner\.spec\.ts|[\\/]hosts[\\/]/,
       use: { ...devices['Desktop Firefox'] },
     },
     // Live: real backend, opt-in via GROVS_LIVE_API_KEY. Excluded from verify;

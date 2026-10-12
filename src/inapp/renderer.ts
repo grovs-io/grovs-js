@@ -104,6 +104,7 @@ const CSS = `
 .layer.html .frame { display: block; width: 100%; height: 90vh; border: 0; max-height: 90vh; min-height: 44px; }
 .layer.html.banner .card { width: 100%; border-radius: 0; }
 .layer.html.banner .frame { height: 30vh; max-height: 30vh; }
+@media (max-height: 500px) { .layer.html.banner .frame { height: 45vh; max-height: 45vh; } }
 .layer.html.banner_top { padding-top: env(safe-area-inset-top); }
 .layer.html.full { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
 .layer.html.full .card { width: 100%; height: 100%; border-radius: 0; box-shadow: none; }
@@ -183,6 +184,16 @@ export class InAppRenderer implements Presenter {
       };
       this.open = open;
       this.style(root);
+      // Turned away from its orientation, the message closes: not the person's dismissal.
+      const only = presentation.campaign.content.orientation;
+      const query = only && this.doc.defaultView?.matchMedia?.('(orientation: portrait)');
+      if (query) {
+        const turned = (): void => {
+          if (query.matches !== (only === 'portrait')) open.finish({ kind: 'dismissed', reason: 'orientation' });
+        };
+        query.addEventListener('change', turned);
+        open.cleanup.push(() => query.removeEventListener('change', turned));
+      }
       if (presentation.page) {
         this.drawPage(open, presentation.campaign, presentation.page, drawn);
         this.doc.body.appendChild(host);

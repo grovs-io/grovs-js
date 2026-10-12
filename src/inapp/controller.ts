@@ -61,7 +61,7 @@ export interface Presentation {
 
 export type Outcome =
   | { kind: 'clicked'; buttonId: string | null; action: Action }
-  | { kind: 'dismissed'; reason: 'close_button' | 'backdrop' | 'swipe' | 'replaced' | 'app' }
+  | { kind: 'dismissed'; reason: 'close_button' | 'backdrop' | 'swipe' | 'replaced' | 'app' | 'orientation' }
   /** The question was answered, however the message closed afterwards. */
   | { kind: 'answered'; value: number | string; comment: string | null }
   /** Never drawn: nothing is reported for it. `missing`: a personalization field had no value. */

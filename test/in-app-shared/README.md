@@ -99,7 +99,7 @@ An engine applies these in order for each campaign and reports the first that fa
 | 3 | `no_trigger` | No trigger matches the event |
 | 4 | `not_ready` | The campaign's images are not on the device |
 | 5 | `schedule` | `at` is before `start_at`, at or after `end_at`, or outside the days or hours |
-| 6 | `condition` | Any device condition fails, or the campaign asks for push permission that is already granted |
+| 6 | `condition` | Any device condition fails, the campaign asks for push permission that is already granted, or `content.orientation` is `portrait` or `landscape` and the device is held the other way |
 | 7 | `answered` | The campaign asks a question and the person has answered it on this device |
 | 8 | `cap_session` | Views of this campaign in this session have reached the cap |
 | 9 | `cap_day` | Views of this campaign on this local calendar day have reached the cap |
@@ -125,7 +125,7 @@ A campaign is `unsupported` unless all of this holds. Fields not listed here are
 | Timestamp | `YYYY-MM-DDTHH:MM:SSZ`, with optional `.` and one to three digits before the `Z`. Always UTC, with an uppercase `T` and `Z`. It must be a real calendar time: the 30th of February, hour 24 and second 60 are refused |
 | Integer | A JSON number with no fractional part. 1.0 is the integer 1, because JavaScript cannot tell them apart |
 | Object | Where this table says object, list or string, a value of another kind makes the definition unreadable. A filter, condition, trigger, button or action that is not an object is unreadable |
-| Content | `title` and `message` are each a string or null. `buttons` is a list. `tap_action` is an action or null. `dismissible`, when present, is a boolean; when it is false there is at least one button or a tap action |
+| Content | `title` and `message` are each a string or null. `buttons` is a list. `tap_action` is an action or null. `orientation`, when present, is `any`, `portrait` or `landscape`; any other value makes the campaign unsupported. `dismissible`, when present, is a boolean; when it is false there is at least one button or a tap action, except for the `html` template, where the SDK always draws its own close (see `dismissible` false) |
 | `html` template's content | `html` is a string. `layout` is one of `full`, `modal`, `banner_top`, `banner_bottom`. Both are required; missing either, or an unknown `layout`, makes the campaign unsupported. See `html_parsing` cases |
 | Button | `id` and `text` are non-empty strings. `action` is an action |
 | Action | `type` is one of the six actions. `open_url` has a `url` string. `key_value` has a `payload` object |
@@ -162,6 +162,7 @@ Any other operator, condition type, trigger type or action type is one the engin
 | `os_version` | The operating system version on iOS and Android. Empty on the web |
 | `first_seen_at` | From the sync response. May be null |
 | `push_permission` | `granted`, `denied` or `not_asked` |
+| `orientation` | `portrait` or `landscape`, read again before every decision. iOS: the active window scene's interface orientation. Web: `matchMedia('(orientation: portrait)')`, so a desktop browser is usually `landscape`. A case device without one is `portrait` |
 | Store address | The address of the app's page in its store, from the sync response. A device without one cannot perform `open_store`, and neither can the web |
 
 ## Rules the cases pin down
@@ -205,7 +206,8 @@ These are the display's work, not the engine's. The cases pin only what the engi
 | One delayed message | A device holds at most one delayed message. A second one replaces it only with a higher priority |
 | Delay and other messages | While a message waits out its delay, other events are decided as usual. If one is on screen when the delay ends, the delayed message takes the waiting place under the usual rule |
 | Delay ends with the session | A delayed message is dropped when the app goes to the background or the SDK stops |
-| `dismissible` false | No close button is drawn whatever `close_button` says. A tap outside the message, a swipe, the Escape key and the accessibility escape gesture do nothing. A button or the tap action closes it. The host app can still close it through the SDK |
+| `dismissible` false | No close button is drawn whatever `close_button` says. A tap outside the message, a swipe, the Escape key and the accessibility escape gesture do nothing. A button or the tap action closes it. The host app can still close it through the SDK. For `html` the SDK's close is always drawn, so a broken page can't trap anyone; `dismissible: false` only stops the backdrop tap, the swipe and the escape gestures |
+| Orientation | A message with `orientation` `portrait` or `landscape` that is on screen when the device turns the other way closes, reported as `in_app_dismissed` with reason `orientation`, not a dismissal by the person: the campaign report leaves it out of dismissals. The SDK never rotates the device or changes the app's orientations. Absent means `any` |
 | `open_store` | Opens the store address the sync response gave for this platform |
 | Nowhere to draw | A message that could not be put on screen gains no view, reports nothing and goes to the host's error callback |
 | Tap on the message | The click names no `button_id` |

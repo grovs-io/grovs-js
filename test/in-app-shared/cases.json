@@ -60,7 +60,8 @@
       "age": 31
     },
     "unsupported_templates": [],
-    "unsupported_actions": []
+    "unsupported_actions": [],
+    "orientation": "portrait"
   },
   "base_case": {
     "global_caps": {
@@ -3090,6 +3091,179 @@
       ]
     },
     {
+      "name": "a portrait-only message shows in portrait and a landscape-only one does not",
+      "campaigns": [
+        {
+          "id": "portrait_only",
+          "priority": 3,
+          "content": {
+            "orientation": "portrait"
+          }
+        },
+        {
+          "id": "landscape_only",
+          "priority": 2,
+          "content": {
+            "orientation": "landscape"
+          }
+        },
+        {
+          "id": "any",
+          "priority": 1,
+          "content": {
+            "orientation": "any"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "at": "2026-10-01T10:00:00Z",
+          "event": {
+            "type": "event",
+            "name": "cart_viewed"
+          },
+          "expect": {
+            "show": "portrait_only",
+            "reasons": {
+              "landscape_only": "condition",
+              "any": "lower_priority"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a landscape-only message shows in landscape and a portrait-only one does not",
+      "device": {
+        "orientation": "landscape"
+      },
+      "campaigns": [
+        {
+          "id": "portrait_only",
+          "priority": 3,
+          "content": {
+            "orientation": "portrait"
+          }
+        },
+        {
+          "id": "landscape_only",
+          "priority": 2,
+          "content": {
+            "orientation": "landscape"
+          }
+        },
+        {
+          "id": "any",
+          "priority": 1,
+          "content": {
+            "orientation": "any"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "at": "2026-10-01T10:00:00Z",
+          "event": {
+            "type": "event",
+            "name": "cart_viewed"
+          },
+          "expect": {
+            "show": "landscape_only",
+            "reasons": {
+              "portrait_only": "condition",
+              "any": "lower_priority"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a message for any orientation, or with none set, shows in both",
+      "off_schema": [
+        "sideways"
+      ],
+      "device": {
+        "orientation": "landscape"
+      },
+      "campaigns": [
+        {
+          "id": "any",
+          "priority": 2,
+          "content": {
+            "orientation": "any"
+          },
+          "caps": {
+            "lifetime": 1
+          }
+        },
+        {
+          "id": "plain",
+          "priority": 1
+        },
+        {
+          "id": "sideways",
+          "priority": 3,
+          "content": {
+            "orientation": "upside_down"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "at": "2026-10-01T10:00:00Z",
+          "event": {
+            "type": "event",
+            "name": "cart_viewed"
+          },
+          "expect": {
+            "show": "any",
+            "reasons": {
+              "plain": "lower_priority",
+              "sideways": "unsupported"
+            }
+          }
+        },
+        {
+          "at": "2026-10-01T10:01:00Z",
+          "event": {
+            "type": "event",
+            "name": "cart_viewed"
+          },
+          "expect": {
+            "show": "plain",
+            "reasons": {
+              "any": "cap_lifetime",
+              "sideways": "unsupported"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a message for any orientation shows in portrait",
+      "campaigns": [
+        {
+          "id": "any",
+          "content": {
+            "orientation": "any"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "at": "2026-10-01T10:00:00Z",
+          "event": {
+            "type": "event",
+            "name": "cart_viewed"
+          },
+          "expect": {
+            "show": "any",
+            "reasons": {}
+          }
+        }
+      ]
+    },
+    {
       "name": "campaign ages compare as instants, not as text",
       "campaigns": [
         {
@@ -3844,6 +4018,46 @@
               "trap": "unsupported",
               "button": "lower_priority",
               "word": "unsupported"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "an html message that cannot be dismissed carries its way out in its page",
+      "off_schema": [
+        "trap"
+      ],
+      "campaigns": [
+        {
+          "id": "trap",
+          "priority": 9,
+          "content": {
+            "dismissible": false
+          }
+        },
+        {
+          "id": "page",
+          "priority": 8,
+          "template": "html",
+          "content": {
+            "html": "<div>Hi</div>",
+            "layout": "modal",
+            "dismissible": false
+          }
+        }
+      ],
+      "steps": [
+        {
+          "at": "2026-10-01T10:00:00Z",
+          "event": {
+            "type": "event",
+            "name": "cart_viewed"
+          },
+          "expect": {
+            "show": "page",
+            "reasons": {
+              "trap": "unsupported"
             }
           }
         }

@@ -20,6 +20,8 @@ export type Template =
 
 export type Layout = 'full' | 'modal' | 'banner_top' | 'banner_bottom';
 
+export type Orientation = 'portrait' | 'landscape';
+
 export type ActionType =
   | 'close'
   | 'open_url'
@@ -72,6 +74,8 @@ export interface Content {
   question: Question | null;
   /** Set for the html template only. */
   layout: Layout | null;
+  /** The only orientation it shows in; null for any. */
+  orientation: Orientation | null;
 }
 
 export interface Comparison {
@@ -144,6 +148,7 @@ export interface Device {
   utcOffsetMinutes: number;
   user: Record<string, unknown>;
   pushPermission: PushPermission;
+  orientation: Orientation;
   unsupportedTemplates: readonly string[];
   unsupportedActions: readonly string[];
 }

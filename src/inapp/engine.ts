@@ -231,6 +231,8 @@ export class Engine {
   private conditionsPass(campaign: Campaign, at: number): boolean {
     const asksForPush = actionTypes(campaign).includes('request_push_permission');
     if (asksForPush && this.device.pushPermission === 'granted') return false;
+    // A message for one orientation waits for it, like a condition.
+    if (campaign.content.orientation && campaign.content.orientation !== this.device.orientation) return false;
     return campaign.conditions.every((condition) => this.conditionPasses(condition, at));
   }
 

@@ -22,5 +22,5 @@ export default tseslint.config(
     files: ['src/core/environment.ts'],
     rules: { 'no-restricted-globals': 'off' },
   },
-  { ignores: ['dist/**', 'node_modules/**', 'public/**', 'demo/**', 'playwright-report/**', 'src/inapp/bridge.js'] },
+  { ignores: ['dist/**', 'node_modules/**', 'public/**', 'demo/**', 'playwright-report/**', 'src/inapp/bridge.js', 'e2e/hosts/{plain,react,next,vue}/**'] },
 );

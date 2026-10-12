@@ -323,7 +323,7 @@ export class GrovsClient {
       storage: this.storage,
       clock: this.clock,
       logger: this.logger,
-      presenter: new WebPresenter(this.logger),
+      presenter: new WebPresenter(this.logger, () => this.events.flushOnExit()),
       loadImage,
       device: () => webDevice(this.config.inAppVersion, this.context.userAttributes),
       sync: async (body) => {

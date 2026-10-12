@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="grovs-layout" content="banner_top">
+<meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0F172A" media="(prefers-color-scheme: dark)">
+<title>Announcement banner</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #FFFFFF;
+    --text: #0F172A;
+    --muted: #475569;
+    --edge: #E2E8F0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0F172A; --text: #F1F5F9; --muted: #94A3B8; --edge: #1E293B; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -webkit-text-size-adjust: 100%;
+    border-bottom: 1px solid var(--edge);
+  }
+  main {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    max-width: 760px;
+    margin: 0 auto;
+    padding: calc(14px + env(safe-area-inset-top)) calc(52px + env(safe-area-inset-right)) calc(14px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
+  }
+  .icon {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 14px;
+    background: var(--brand);
+    background: linear-gradient(140deg, color-mix(in srgb, var(--brand) 80%, #FFFFFF), var(--brand));
+    color: #FFFFFF;
+    box-shadow: 0 6px 14px -8px var(--brand);
+  }
+  .icon svg { width: 24px; height: 24px; }
+  .body { flex: 1; min-width: 0; }
+  .title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+  .chip {
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(124, 58, 237, .12);
+    background: color-mix(in srgb, var(--brand) 14%, transparent);
+    color: var(--brand);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+  }
+  @media (prefers-color-scheme: dark) {
+    .chip { color: color-mix(in srgb, var(--brand) 55%, #FFFFFF); }
+  }
+  h1 { margin: 0; font-size: 16px; line-height: 1.3; }
+  p { margin: 3px 0 0; color: var(--muted); }
+  .link {
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 8px;
+    padding: 6px 12px;
+    border: 0;
+    border-radius: 999px;
+    background: var(--brand);
+    color: #FFFFFF;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: filter .12s ease, transform .12s ease;
+  }
+  .link::after { content: "→"; transition: transform .15s ease; }
+  .link:hover { filter: brightness(1.06); }
+  .link:hover::after { transform: translateX(2px); }
+  .link:active { transform: scale(.97); }
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+  @media (min-width: 640px) {
+    main { align-items: center; }
+    .body { display: flex; align-items: center; gap: 16px; }
+    .text { flex: 1; min-width: 0; }
+    .link { flex: none; margin-top: 0; }
+  }
+  /* A wide, short banner: tighter spacing and a smaller icon; keyed on shape, not height, so the height it settles at can't flip it. */
+  @media (max-height: 300px) and (min-aspect-ratio: 3/1) {
+    main { gap: 12px; padding-top: calc(10px + env(safe-area-inset-top)); padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
+    .icon { width: 36px; height: 36px; border-radius: 11px; }
+    .icon svg { width: 20px; height: 20px; }
+    p { margin-top: 2px; }
+    .link { margin-top: 6px; }
+  }
+  /* Shown full screen: centred, not a strip at the top; a transform keeps the measured height. */
+  @media (min-height: 320px) {
+    body { border-bottom: 0; }
+    main { transform: translateY(max(0px, calc(50vh - 50%))); }
+  }
+</style>
+</head>
+<body data-grovs-edit-color="--brand" style="--brand: #7C3AED">
+  <main>
+    <div class="icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/><path d="M19 3v4M21 5h-4"/></svg>
+    </div>
+    <div class="body">
+      <div class="text">
+        <div class="title">
+          <span class="chip" data-grovs-edit="Label">New</span>
+          <h1 data-grovs-edit="Headline">Dark mode is here</h1>
+        </div>
+        <p data-grovs-edit="Text">Easier on the eyes at night. Switch it on in Settings › Appearance.</p>
+      </div>
+      <button type="button" class="link" data-grovs-edit="Link button" data-grovs-action="open" data-grovs-url="https://example.com/dark-mode">See how</button>
+    </div>
+  </main>
+</body>
+</html>

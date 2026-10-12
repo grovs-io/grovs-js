@@ -54,6 +54,34 @@ afterEach(() => {
 });
 
 describe('InAppRenderer', () => {
+  it('closes a message for one orientation when the device turns the other way, and stops listening', async () => {
+    const query = { matches: true, listeners: new Set<() => void>() };
+    const media = {
+      get matches() {
+        return query.matches;
+      },
+      addEventListener: (_: string, fn: () => void) => query.listeners.add(fn),
+      removeEventListener: (_: string, fn: () => void) => query.listeners.delete(fn),
+    };
+    vi.stubGlobal('matchMedia', () => media);
+    try {
+      const { outcome } = open({ content: { orientation: 'portrait' } });
+      query.listeners.forEach((fn) => fn());
+      await settle();
+      expect(outcome.value).toBeNull();
+      query.matches = false;
+      query.listeners.forEach((fn) => fn());
+      await settle();
+      expect(outcome.value).toEqual({ kind: 'dismissed', reason: 'orientation' });
+      expect(query.listeners.size).toBe(0);
+      document.body.replaceChildren();
+      open({ content: { orientation: 'any' } });
+      expect(query.listeners.size).toBe(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('draws the title and message as text, never as markup', () => {
     const { root } = open({}, { title: '<img src=x onerror=alert(1)>', message: '<b>bold</b>' });
     expect(root.querySelector('.title')?.textContent).toBe('<img src=x onerror=alert(1)>');

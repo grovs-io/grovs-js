@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="grovs-layout" content="modal">
+<meta name="theme-color" content="#C2410C">
+<title>Countdown offer</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #FFFFFF;
+    --text: #0F172A;
+    --muted: #475569;
+    --soft: #F1F5F9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0B1220; --text: #F1F5F9; --muted: #94A3B8; --soft: #16213A; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -webkit-text-size-adjust: 100%;
+  }
+  header {
+    position: relative;
+    overflow: hidden;
+    padding: calc(28px + env(safe-area-inset-top)) calc(24px + env(safe-area-inset-right)) 24px calc(24px + env(safe-area-inset-left));
+    background: var(--brand);
+    background:
+      radial-gradient(120% 120% at 100% 0%, color-mix(in srgb, var(--brand) 55%, #FDE047) 0%, transparent 55%),
+      linear-gradient(160deg, var(--brand) 0%, color-mix(in srgb, var(--brand) 70%, #000000) 100%);
+    color: #FFFFFF;
+    text-align: center;
+  }
+  header::after {
+    content: "";
+    position: absolute;
+    right: -40px;
+    bottom: -60px;
+    width: 180px;
+    height: 180px;
+    border-radius: 50%;
+    border: 28px solid rgba(255, 255, 255, .08);
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, .18);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+  }
+  .chip::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #FDE047;
+    box-shadow: 0 0 0 3px rgba(253, 224, 71, .3);
+  }
+  h1 { margin: 12px 0 18px; font-size: 26px; line-height: 1.15; letter-spacing: -.02em; }
+  .timer { display: flex; justify-content: center; gap: 8px; }
+  .unit {
+    min-width: 66px;
+    padding: 10px 6px 8px;
+    border-radius: 14px;
+    background: rgba(255, 255, 255, .16);
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+  }
+  .unit b {
+    display: block;
+    font-size: 28px;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -.01em;
+  }
+  .unit span { display: block; margin-top: 4px; font-size: 11px; opacity: .8; text-transform: uppercase; letter-spacing: .08em; }
+  main { padding: 20px calc(24px + env(safe-area-inset-right)) calc(22px + env(safe-area-inset-bottom)) calc(24px + env(safe-area-inset-left)); }
+  p { margin: 0; color: var(--muted); text-align: center; }
+  .actions { display: grid; gap: 8px; margin-top: 18px; }
+  .btn {
+    appearance: none;
+    width: 100%;
+    min-height: 48px;
+    padding: 12px 20px;
+    border: 0;
+    border-radius: 14px;
+    font: inherit;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: transform .12s ease, filter .12s ease;
+  }
+  .btn:active { transform: scale(.98); }
+  .primary { background: var(--brand); color: #FFFFFF; box-shadow: 0 8px 20px -10px var(--brand); }
+  .primary:hover { filter: brightness(1.06); }
+  .ghost { background: transparent; color: var(--muted); }
+  .ghost:hover { background: var(--soft); }
+  :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+  /* A phone on its side: tighter, with the countdown beside the words when there is room. */
+  @media (orientation: landscape) and (max-height: 500px) and (max-width: 1000px) {
+    header { padding-top: calc(16px + env(safe-area-inset-top)); padding-bottom: 16px; }
+    h1 { margin: 8px 0 10px; font-size: 22px; }
+    .unit { min-width: 56px; padding: 6px 4px 5px; }
+    .unit b { font-size: 22px; }
+    main { padding-top: 14px; }
+    .actions { grid-auto-flow: column; grid-auto-columns: 1fr; margin-top: 14px; }
+  }
+  @media (orientation: landscape) and (max-height: 500px) and (min-width: 600px) and (max-width: 1000px) {
+    body { display: flex; }
+    header { flex: 1 1 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; padding-right: 24px; }
+    main { flex: 1 1 50%; align-self: center; padding-left: 24px; }
+  }
+  /* A banner on its side: the words clear of the close button. */
+  @media (orientation: landscape) and (max-height: 300px) and (min-width: 600px) and (max-width: 1000px) {
+    p { padding-right: 16px; font-size: 14px; }
+  }
+  /* Full screen on its side: the countdown fills its column, the words centred clear of the close button; fixed and transform keep the measured height. */
+  @media (orientation: landscape) and (min-height: 301px) and (max-height: 500px) and (min-width: 600px) and (max-width: 1000px) {
+    header { position: fixed; top: 0; bottom: 0; left: 0; width: 50%; }
+    main { margin-left: 50%; align-self: flex-start; padding-top: calc(48px + env(safe-area-inset-top)); padding-right: calc(48px + env(safe-area-inset-right)); transform: translateY(max(0px, calc(50vh - 50%))); }
+    .actions { grid-auto-flow: row; }
+  }
+</style>
+</head>
+<body data-grovs-edit-color="--brand" style="--brand: #C2410C">
+  <header>
+    <span class="chip" data-grovs-edit="Label">Flash sale</span>
+    <h1 data-grovs-edit="Headline">40% off Pro, today only</h1>
+    <div class="timer" role="timer" aria-label="Time left today">
+      <div class="unit"><b id="hours">05</b><span>Hours</span></div>
+      <div class="unit"><b id="minutes">42</b><span>Min</span></div>
+      <div class="unit"><b id="seconds">17</b><span>Sec</span></div>
+    </div>
+  </header>
+  <main>
+    <p data-grovs-edit="Text">Unlimited projects, priority support and every premium template. The offer ends at midnight.</p>
+    <div class="actions">
+      <button type="button" class="btn primary" data-grovs-edit="Main button" data-grovs-action="open" data-grovs-url="https://example.com/upgrade?offer=flash40">Claim 40% off</button>
+      <button type="button" class="btn ghost" data-grovs-edit="Dismiss button" data-grovs-action="close">No thanks</button>
+    </div>
+  </main>
+  <script>
+    (function () {
+      // When the offer ends, as an ISO date such as "2026-12-31T23:59:59Z"; null counts down to the person's midnight.
+      var END = null;
+      var hours = document.getElementById("hours");
+      var minutes = document.getElementById("minutes");
+      var seconds = document.getElementById("seconds");
+      function pad(n) {
+        return n < 10 ? "0" + n : String(n);
+      }
+      function tick() {
+        var now = new Date();
+        var end = END ? new Date(END) : new Date(now);
+        if (!END) end.setHours(24, 0, 0, 0);
+        var left = Math.max(0, Math.floor((end - now) / 1000));
+        hours.textContent = pad(Math.floor(left / 3600));
+        minutes.textContent = pad(Math.floor((left % 3600) / 60));
+        seconds.textContent = pad(left % 60);
+      }
+      tick();
+      setInterval(tick, 1000);
+    })();
+  </script>
+</body>
+</html>

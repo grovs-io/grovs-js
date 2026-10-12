@@ -1,0 +1,12 @@
+{
+  "name": "grovs-host-next",
+  "private": true,
+  "scripts": {
+    "serve": "NEXT_TELEMETRY_DISABLED=1 next build && NEXT_TELEMETRY_DISABLED=1 next start -p 4803"
+  },
+  "dependencies": {
+    "next": "15.5.4",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  }
+}
