@@ -15,8 +15,51 @@
   side), up from 30%.
 - In-app HTML: `grovs.open()` (and a link) opens only within 2 seconds of a tap in the message;
   later, for example after a slow network call, it is ignored.
+- In-app sync on returning to the page (tab shown, or window focused) happens only when the last
+  sync is over a minute old. A window brought forward from behind another now counts as a return,
+  so a test message sent from the dashboard shows without waiting for the 15 minute sync.
+- `Grovs.configure()` called again with the same settings on an authenticated client keeps that
+  client and takes the new callbacks: no re-authentication, no identity re-push, and the smart
+  banner no longer flickers or counts a second `smart_banner_view`. Different settings, or a client
+  disabled with `setEnabled(false)`, still build a new client.
+- The bundle budget is 40 KB compressed, up from 39 KB, for the fixes below.
+
+### Fixed
+
+- An in-app HTML message that is not ready within 5 s, most often because the host page's
+  Content-Security-Policy has no `'unsafe-inline'` in `script-src`, now reports `onError` with
+  `inAppDisplayFailed` (5) once, naming the CSP, instead of only a warning. See "In-app HTML
+  messages and CSP" in the README.
+- A new session started during an in-app sync handles its `app_open` before the event that started
+  it, not after.
+- A `mailto:`, `tel:` or app-scheme link in an in-app message no longer leaves the next waiting
+  message stuck until the page is hidden and shown again.
+- Escape closes an in-app HTML message while the focus is inside its frame.
+- In-app test messages with an action this SDK cannot perform (rating, push permission) are skipped
+  as live campaigns are, instead of showing buttons that do nothing.
+- Smart banner: the close button has a 44px target and a visible keyboard focus ring, and the bar
+  is a labelled region.
+- `reset()` also forgets `Grovs.smartBanner.hide()` on the current page, as documented.
+- `track()` refuses every name the backend rejects: also `push_open`, `push_delivered`,
+  `push_held`, `in_app_held`, `journey_entered`, `journey_held` and `journey_path`.
 
 ## 2.1.0 — 2026-10-06
+
+### Upgrade notes
+
+A minor version, but check these before upgrading (details in [MIGRATION.md](MIGRATION.md)):
+
+- The messages inbox APIs are no-ops: `getMessages()` resolves `[]`, `numberOfUnreadMessages()`
+  `0`, `markMessageAsRead()` `true` (also before `configure()`), and `showMessagesList()` /
+  `displayAutomaticMessages()` do nothing.
+- The smart banner and in-app messages are on by default: they show as soon as one is configured
+  in the dashboard. Pass `smartBanner: false` to keep the banner off.
+- `GrovsError` has a new code, `inAppDisplayFailed` (5). An exhaustive `switch` over the codes needs
+  a case for it.
+- `track()` refuses the reserved names `in_app_viewed`, `in_app_clicked`, `in_app_dismissed`,
+  `in_app_answered` and `in_app_commented`.
+- The bundle grew by about 15 KB compressed, to about 39 KB, for in-app messages and the smart
+  banner.
 
 ### Added
 
@@ -29,8 +72,8 @@
 - In-app questions: a message can ask for a star rating or one choice from a list. One tap
   answers, and the campaign is not shown again on that device. A comment box and
   a closing thanks can follow. The host hears of it through `onAnswered(campaignId, value,
-  comment)`. `in_app_answered` and `in_app_commented` are now reserved event names, and an answer
-  can trigger another campaign.
+  comment)`. `in_app_viewed`, `in_app_clicked`, `in_app_dismissed`, `in_app_answered` and
+  `in_app_commented` are now reserved event names, and an answer can trigger another campaign.
 - Smart banner: a dashboard-configured "Open in app" banner on mobile
   browsers, with `Grovs.smartBanner.setLinkData()`, `hide()` and `refresh()`,
   the `smartBanner` configure option, and the `--grovs-smart-banner-top` /

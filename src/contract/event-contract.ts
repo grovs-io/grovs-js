@@ -22,19 +22,26 @@ export const RESERVED_EVENT_NAMES: ReadonlySet<string> = new Set([
   'time_spent',
   'reactivation',
   'user_referred',
+  'push_open',
 ]);
 
 /**
- * Sent by the SDK itself when it shows an in-app message. The backend checks
- * each against the campaign it names, but a host that tracked one by hand
- * would still skew that campaign's report.
+ * Grovs::Events::MESSAGE_EVENT_NAMES: raised by a message or the server, not the person.
+ * A host that tracked one by hand would skew that message's report.
  */
-export const IN_APP_EVENT_NAMES: ReadonlySet<string> = new Set([
+export const MESSAGE_EVENT_NAMES: ReadonlySet<string> = new Set([
+  'push_open',
   'in_app_viewed',
   'in_app_clicked',
   'in_app_dismissed',
   'in_app_answered',
   'in_app_commented',
+  'in_app_held',
+  'push_delivered',
+  'push_held',
+  'journey_entered',
+  'journey_held',
+  'journey_path',
 ]);
 
 /** From Grovs::Enrichment in the backend's app_constants.rb. */

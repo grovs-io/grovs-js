@@ -770,6 +770,19 @@ describe('SmartBannerController', () => {
     controller.stop();
   });
 
+  it('clearCaches() forgets hide() on the same page', async () => {
+    const { controller, transport } = setup();
+    transport.enqueue(LIST);
+    controller.start();
+    await settle();
+    controller.hide();
+    controller.clearCaches();
+    transport.enqueue(LIST);
+    await controller.refresh();
+    expect(document.getElementById(HOST_ID)).not.toBeNull();
+    controller.stop();
+  });
+
   it('hide() survives stop/start on the same page (re-configure, auth retry, consent)', async () => {
     const { controller, transport, bumpGeneration } = setup();
     transport.enqueue(LIST);

@@ -13,6 +13,7 @@ import { currentRoute } from './smartBanner/match';
 
 let client: GrovsClient | null = null;
 let links: LinkGenerator | null = null;
+let configured = '';
 
 /**
  * In-app settings outlive a client: configure() builds a new one, and a host
@@ -63,6 +64,13 @@ const facade = {
     // Validate before retiring: a throw must not strand the facade on a dead
     // client. Construct after, or the new queue loads before the old one persists.
     resolveConfig(config);
+    // Same settings again (a per-page call): keep the client, so the banner neither flickers nor counts again.
+    const settings = JSON.stringify(config);
+    if (client?.isAuthenticated() && client.isEnabled && settings === configured) {
+      client.adopt(config);
+      return true;
+    }
+    configured = settings;
 
     // React strict mode and hot reload call this twice. The per-client guard
     // cannot help here: a second call builds a *new* client, so without this

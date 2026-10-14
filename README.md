@@ -210,7 +210,11 @@ can be segmented by screen. Screen names are capped at 255 characters.
 
 **Event names** must be non-empty and must not be a reserved system name
 (`install`, `reinstall`, `app_open`, `view`, `open`, `time_spent`,
-`reactivation`, `user_referred`). Use `trackScreenView()` for screen views.
+`reactivation`, `user_referred`) or a message event (`push_open`,
+`push_delivered`, `push_held`, `in_app_viewed`, `in_app_clicked`,
+`in_app_dismissed`, `in_app_answered`, `in_app_commented`, `in_app_held`,
+`journey_entered`, `journey_held`, `journey_path`); the backend rejects them too.
+Use `trackScreenView()` for screen views.
 
 **Property values** may be strings, numbers, booleans, `null`, or nested
 arrays and objects of those. `Date`, `URL` and `BigInt` are coerced to
@@ -286,6 +290,22 @@ working, and none of them makes a request:
 | `Grovs.markMessageAsRead(id)` | resolves `true` |
 
 The `messagesTheme` option is still accepted and ignored.
+
+## In-app HTML messages and CSP
+
+An HTML in-app message runs in a sandboxed `srcdoc` iframe, which inherits your
+page's Content-Security-Policy. The SDK cannot override it, so the policy must
+allow what the message uses:
+
+- `script-src 'unsafe-inline'`: the message's bridge and its own scripts are
+  inline. Without it the message never starts; the SDK skips it and reports
+  `onError` with `inAppDisplayFailed` (5) once, naming the CSP.
+- `img-src`, `media-src` and `font-src`: the hosts the message loads pictures,
+  video and fonts from (your CDN, or `https:`). `img-src` also covers the
+  pictures of the built-in templates.
+- `style-src 'unsafe-inline'` if the message uses `<style>` or `style=""`.
+
+The built-in templates need no script or style exception.
 
 ## Smart banner
 
@@ -455,7 +475,8 @@ device and no request leaves until `grantConsent()`.
 
 ## Errors
 
-Every failure reaches `onError` with one of four codes, matching the iOS SDK:
+Every failure reaches `onError` with one of five codes, matching the iOS SDK.
+Code 5 is new in 2.1.0; an exhaustive `switch` needs a case for it.
 
 | Code | Meaning |
 |---|---|
@@ -463,6 +484,7 @@ Every failure reaches `onError` with one of four codes, matching the iOS SDK:
 | `2` `networkRequestFailed` | A request failed, or the SDK was called during SSR |
 | `3` `eventDispatchFailed` | Events were rejected; they stay queued unless permanently invalid |
 | `4` `linkGenerationFailed` | Link generation failed |
+| `5` `inAppDisplayFailed` | An in-app message could not be drawn, for example an HTML message blocked by the page's CSP |
 
 ```javascript
 import Grovs, { GrovsError } from "grovs";

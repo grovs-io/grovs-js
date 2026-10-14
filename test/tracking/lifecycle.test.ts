@@ -55,6 +55,23 @@ describe('LifecycleTracker', () => {
     tracker.stop();
   });
 
+  it('treats a window focus as a return, without restarting engagement', () => {
+    setVisibility('visible');
+    const onForeground = vi.fn();
+    const clock = new FakeClock();
+    const onEngagement = vi.fn();
+    const tracker = new LifecycleTracker({ clock, onEngagement, onExit: vi.fn(), onHide: vi.fn(), onForeground });
+    tracker.start();
+    clock.advance(5000);
+    window.dispatchEvent(new Event('focus'));
+    expect(onForeground).toHaveBeenCalledOnce();
+    window.dispatchEvent(new Event('pagehide'));
+    expect(onEngagement).toHaveBeenCalledWith(5);
+    tracker.stop();
+    window.dispatchEvent(new Event('focus'));
+    expect(onForeground).toHaveBeenCalledOnce();
+  });
+
   it('emits engagement when the tab is hidden', () => {
     setVisibility('visible');
     const { tracker, clock, onEngagement } = make();

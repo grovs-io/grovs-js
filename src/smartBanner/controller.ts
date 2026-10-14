@@ -125,6 +125,7 @@ export class SmartBannerController {
     this.deps.store.clearSession();
     this.forget();
     this.linkData = null;
+    this.hiddenPath = null;
     this.dataRev += 1;
   }
 

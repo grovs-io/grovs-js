@@ -961,6 +961,12 @@ export class GrovsClient {
     this.markIdentityChanged();
   }
 
+  /** A repeat configure() with the same settings: this client stays, with the new callbacks. */
+  adopt(config: GrovsConfig): void {
+    Object.assign(this.config, resolveConfig(config));
+    this.logger.setOnError(this.config.onError);
+  }
+
   isAuthenticated(): boolean {
     return this.context.authenticated;
   }

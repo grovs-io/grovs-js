@@ -61,12 +61,17 @@ export class LifecycleTracker {
       this.deps.onExit();
     };
 
+    // A window brought forward from behind another stays visible: its focus is the return.
+    const onFocus = (): void => this.deps.onForeground?.();
+
     doc.addEventListener('visibilitychange', onVisibilityChange);
     win.addEventListener('pagehide', onPageHide);
+    win.addEventListener('focus', onFocus);
 
     this.listeners.push(
       () => doc.removeEventListener('visibilitychange', onVisibilityChange),
       () => win.removeEventListener('pagehide', onPageHide),
+      () => win.removeEventListener('focus', onFocus),
     );
   }
 

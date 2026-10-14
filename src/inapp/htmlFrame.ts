@@ -55,7 +55,10 @@ function inject(html: string, token: string, page: Page): string {
     `window.__grovs={token:${literal(token)},user:${literal(page.user)},event:${literal(page.event)},` +
     `capabilities:${literal({ pushPermission: 'unsupported' })},` +
     // Bound now: author code may replace window.parent.
-    'post:(function(){var p=parent;var pm=p.postMessage.bind(p);return function(m){pm(m,"*")}})()};';
+    'post:(function(){var p=parent;var pm=p.postMessage.bind(p);' +
+    // A focused frame keeps keys from the host page, so Escape is passed up.
+    `addEventListener("keydown",function(e){e.key=="Escape"&&pm({v:1,token:${literal(token)},id:"",type:"escape",args:{}},"*")},!0);` +
+    'return function(m){pm(m,"*")}})()};';
   const script = `<script>${boot}${BRIDGE}</script>`;
   const doctype = DOCTYPE.exec(html)?.[0] ?? '';
   return (doctype || '<!doctype html>') + script + html.slice(doctype.length);
@@ -66,6 +69,8 @@ export interface FrameEvents {
   missing(): void;
   height(value: number): void;
   close(): void;
+  /** Escape pressed inside the frame. */
+  escape(): void;
   /** `active` is false when the frame itself had no tap behind the call. */
   open(url: string, active: boolean): void;
   /** The page loaded a second time: it navigated itself. */
@@ -132,6 +137,7 @@ export class HtmlFrame {
 
   private act(type: unknown, args: Json): void {
     if (type === 'close') return this.events.close();
+    if (type === 'escape') return this.events.escape();
     if (type === 'open') {
       const url = allowedLink(args.url);
       if (url === null) return this.logger.warn(`In-app page link refused: ${String(args.url)}`);

@@ -3,7 +3,7 @@ import type { Logger } from '../logging/logger';
 import { GrovsError } from '../net/errors';
 import type { Storage } from '../storage/storage';
 import { readCampaign, readTimestamp } from './definition';
-import { Engine } from './engine';
+import { Engine, fits } from './engine';
 import { ImageCache, type ImageLoader } from './images';
 import { render } from './personalize';
 import {
@@ -31,6 +31,9 @@ import type { Action, Campaign, Decision, Device, EngineEvent, GlobalCaps, Quest
  */
 
 const SYNC_EVERY = 15 * 60_000;
+const RESYNC_AFTER = 60_000;
+/** A link without a scheme, or an http one, navigates the page away. */
+const LEAVES = /^(?![a-z][\w+.-]*:)|^https?:/i;
 const OPEN_WAIT = 2_000;
 const JITTER = 10_000;
 const TEST_TRIES = 10;
@@ -250,7 +253,8 @@ export class InAppController {
 
   onForeground(): void {
     if (!this.active()) return;
-    void this.sync();
+    // A test sent while the person was away shows on return; a quick switch back reuses the last sync.
+    if (this.now() - this.lastSyncAttempt > RESYNC_AFTER) void this.sync();
     // A page left open for more than a session's length comes back to a new session, and that is an opening.
     this.followSession();
     if (this.fresh) this.onEvent({ type: 'app_open' });
@@ -299,7 +303,8 @@ export class InAppController {
       this.fresh = false;
       if (this.syncing) return this.hold(event);
     }
-    if (this.holdAll && this.syncing) return this.hold(event);
+    // Behind anything held, so a new session's app_open is decided first.
+    if (this.held || (this.holdAll && this.syncing)) return this.hold(event);
     this.handle(event);
     if (event.type === 'screen_view') this.showWaiting();
   }
@@ -465,8 +470,8 @@ export class InAppController {
         if (failed && page && !withdrawn && !('missing' in outcome && outcome.missing)) this.failedHtml.add(id);
         // A page closed before it was revealed was never seen: nothing to report.
         if (!failed && (seen || outcome.kind !== 'dismissed')) this.settle(campaign, base, outcome, click);
-        // A link takes the person away; what waits is shown when they are back, not as they leave.
-        if (!(outcome.kind === 'clicked' && outcome.action.type === 'open_url')) this.showWaiting();
+        // A web link takes the person away; what waits is shown when they are back. mailto: and app links stay.
+        if (!(outcome.kind === 'clicked' && outcome.action.type === 'open_url' && LEAVES.test(outcome.action.url ?? ''))) this.showWaiting();
       });
   }
 
@@ -511,7 +516,7 @@ export class InAppController {
     }
     this.nextTest();
     const campaign = readCampaign(raw);
-    const filled = campaign ? render(campaign, { type: 'app_open' }, this.device().user) : null;
+    const filled = campaign && fits(campaign, this.device()) ? render(campaign, { type: 'app_open' }, this.device().user) : null;
     if (!campaign || !filled || !('rendered' in filled)) {
       this.deps.logger.warn('In-app test message cannot be shown by this SDK');
       return;

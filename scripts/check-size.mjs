@@ -25,7 +25,9 @@ const FILE = 'dist/grovs.global.js';
 // 30.3 KB before, 33.5 KB after.
 //
 // Raised to 39 KB when the smart banner merged in: its 3 KB on top of the 36.
-const BUDGET_BYTES = 39 * 1024;
+//
+// Raised to 40 KB on 2026-10-14 for the SDK audit fixes (CSP error, focus sync, Escape in html frames, banner a11y).
+const BUDGET_BYTES = 40 * 1024;
 
 try {
   statSync(FILE);

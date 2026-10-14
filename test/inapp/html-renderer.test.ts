@@ -17,6 +17,9 @@ function open(content: Json = {}, body = PAGE, eligible = () => true) {
   const logger = new Logger();
   logger.setLevel('warn');
   const warnings = vi.spyOn(logger, 'warn');
+  const errors: [number, string][] = [];
+  logger.setOnError((code, text) => errors.push([code, text]));
+  vi.spyOn(console, 'error').mockImplementation(() => undefined);
   const visited: string[] = [];
   const renderer = new InAppRenderer(document, logger, (url) => visited.push(url));
   const sent: { tracked: [string, Json][]; attributes: [string, unknown][] } = { tracked: [], attributes: [] };
@@ -37,7 +40,7 @@ function open(content: Json = {}, body = PAGE, eligible = () => true) {
     .then((value) => (outcome.value = value));
   const root = document.getElementById('grovs-in-app')?.shadowRoot;
   if (!root) throw new Error('nothing was drawn');
-  return { renderer, root, outcome, visited, sent, warnings, drawn: () => drawn };
+  return { renderer, root, outcome, visited, sent, warnings, errors, drawn: () => drawn };
 }
 
 async function settle(): Promise<void> {
@@ -173,6 +176,22 @@ describe('html messages', () => {
     expect(drawn()).toBe(0);
   });
 
+  it('a page that never becomes ready reports a CSP error with code 5, not for a page that only lacks a height', async () => {
+    vi.useFakeTimers();
+    const { errors } = open();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.[0]).toBe(5);
+    expect(errors[0]?.[1]).toBe("html message not ready within 5 s; a CSP without script-src 'unsafe-inline' blocks it");
+
+    document.body.replaceChildren();
+    const tall = open();
+    await vi.advanceTimersByTimeAsync(0);
+    post(frameOf(tall.root), 'ready', { missing: false });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(tall.errors).toEqual([]);
+  });
+
   it('a deadline that finds the page not eligible asks again and logs no timeout', async () => {
     vi.useFakeTimers();
     const eligible = vi.fn(() => false);
@@ -289,6 +308,24 @@ describe('html messages', () => {
     post(frame, 'height', { value: 10 });
     post(frame, 'requestPushPermission', {}, { id: 'p2' });
     expect(replies.get(frame)?.[1]).toEqual({ v: 1, id: 'p2', ok: true, result: 'unsupported' });
+  });
+
+  it('Escape inside the frame closes a dismissible modal, but leaves a banner or a non-dismissible message open', async () => {
+    const { frame, outcome } = await shownPage();
+    expect(frame.srcdoc).toContain(
+      `addEventListener("keydown",function(e){e.key=="Escape"&&pm({v:1,token:"${tokenOf(frame)}",id:"",type:"escape",args:{}},"*")},!0);`,
+    );
+    post(frame, 'escape');
+    await settle();
+    expect(outcome.value).toEqual({ kind: 'dismissed', reason: 'close_button' });
+
+    for (const content of [{ dismissible: false }, { layout: 'banner_bottom' }]) {
+      document.body.replaceChildren();
+      const kept = await shownPage(content);
+      post(kept.frame, 'escape');
+      await settle();
+      expect(kept.outcome.value).toBeNull();
+    }
   });
 
   it('a banner layout takes no focus and leaves the page usable', async () => {

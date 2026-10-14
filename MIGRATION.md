@@ -3,6 +3,29 @@
 v2 is a TypeScript rewrite. **Your existing v1 code keeps working** — the
 constructor and every callback method are preserved as a deprecated shim.
 
+## Upgrading to 2.1.0
+
+2.1.0 is a minor version, but a few changes can be noticed:
+
+- **Messages inbox APIs are no-ops.** `getMessages()` resolves `[]`,
+  `numberOfUnreadMessages()` resolves `0` and `markMessageAsRead()` resolves
+  `true`, even before `configure()`. `showMessagesList()` and
+  `displayAutomaticMessages()` do nothing. None makes a request. Use in-app
+  messages instead.
+- **Smart banner and in-app messages are on by default.** Nothing shows until a
+  banner or campaign is configured in the dashboard, then it does without a
+  code change. Pass `smartBanner: false` to `configure()` to keep the banner off;
+  `Grovs.inApp.pause()` holds in-app messages.
+- **New `GrovsError` code 5, `inAppDisplayFailed`.** An exhaustive `switch` over
+  the codes (for example with TypeScript's `never` check) needs a case for it.
+- **More reserved event names.** `track()` refuses `in_app_viewed`,
+  `in_app_clicked`, `in_app_dismissed`, `in_app_answered` and
+  `in_app_commented`; rename any custom event that uses them.
+- **Bigger bundle.** About 15 KB more compressed (about 39 KB in all), for
+  in-app messages and the smart banner, which ship in the one file.
+- **HTML in-app messages need a CSP that allows them.** See "In-app HTML
+  messages and CSP" in the README.
+
 ## Read this first: two accessors now return different values
 
 v1 assigned the authenticate response backwards

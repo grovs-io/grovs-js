@@ -1,4 +1,5 @@
 import type { Logger } from '../logging/logger';
+import { GrovsError } from '../net/errors';
 import type { Answered, Commented, Outcome, Page, Presentation, Presenter } from './controller';
 import { HtmlFrame } from './htmlFrame';
 import type { Action, Campaign, Question } from './types';
@@ -321,6 +322,8 @@ export class InAppRenderer implements Presenter {
     const deadline = setTimeout(() => {
       // Not eligible (e.g. a hidden tab): withdrawn, not a failure.
       if (!page.eligible()) return fail();
+      // Never ready: the bridge did not run, which a host CSP blocking inline scripts causes.
+      if (!ready) this.logger.reportErrorOnce('csp', GrovsError.inAppDisplayFailed, "html message not ready within 5 s; a CSP without script-src 'unsafe-inline' blocks it");
       this.logger.warn(`in_app.html_timeout: in-app message ${campaign.id} was not ready within 5 s`);
       fail();
     }, PAGE_DEADLINE);
@@ -355,6 +358,8 @@ export class InAppRenderer implements Presenter {
             show(frame);
           },
           close: () => open.finish({ kind: 'dismissed', reason: 'close_button' }),
+          // As the host page's Escape: only a dismissible modal or full page.
+          escape: () => dismissible && !banner && open.finish({ kind: 'dismissed', reason: 'close_button' }),
           open: (url, active) => {
             if (!active) return this.logger.warn(`In-app page open ignored without a tap: ${url}`);
             this.act(open, null, { type: 'open_url', url }, url);

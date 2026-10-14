@@ -205,10 +205,12 @@ describe('CustomEventsHandler.track', () => {
   // The backend answers 400 for these; failing here names the reason.
   it('rejects reserved system event names', () => {
     const { custom, queue } = harness();
-    for (const name of ['install', 'app_open', 'time_spent', 'user_referred']) {
+    for (const name of ['install', 'app_open', 'time_spent', 'user_referred', 'push_open', 'push_delivered', 'in_app_held', 'journey_path']) {
       custom.track(name);
     }
     expect(queue.size()).toBe(0);
+    custom.track('smart_banner_view');
+    expect(queue.size()).toBe(1);
   });
 
   it('directs screen_view to trackScreenView', () => {

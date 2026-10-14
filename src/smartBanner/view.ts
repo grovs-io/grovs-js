@@ -8,7 +8,8 @@ const CSS = `
 :host{all:initial;display:block}
 .bar{box-sizing:border-box;width:100%;display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--sb-bg);color:var(--sb-fg);font:14px/1.3 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
 .bar.bottom{position:fixed;left:0;right:0;bottom:0;z-index:2147483646;padding-bottom:calc(10px + env(safe-area-inset-bottom))}
-.close{all:unset;cursor:pointer;font-size:20px;line-height:1;padding:4px;opacity:.6;color:inherit}
+.close{all:unset;cursor:pointer;font-size:20px;width:44px;line-height:44px;margin:-2px 0 -2px -12px;text-align:center;opacity:.6;color:inherit}
+.close:focus-visible{outline:2px solid;opacity:1}
 img{width:40px;height:40px;border-radius:9px;flex:none;object-fit:cover}
 .text{flex:1;min-width:0;display:flex;flex-direction:column}
 .title{font-weight:600}
@@ -55,6 +56,8 @@ export class BannerView {
 
     const bar = this.el('div', `bar ${banner.position}`);
     this.bar = bar;
+    bar.setAttribute('role', 'region');
+    bar.setAttribute('aria-label', banner.title);
     const close = this.el('button', 'close') as HTMLButtonElement;
     close.type = 'button';
     close.setAttribute('aria-label', 'Close');

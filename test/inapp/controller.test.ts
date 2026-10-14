@@ -760,6 +760,7 @@ describe('InAppController', () => {
 
       h.state.images = true;
       h.state.response = { ok: true, body: { unchanged: true, server_time: iso(h.clock.now()) } };
+      h.clock.advance(61_000);
       h.controller.onForeground();
       await settle();
       h.controller.onEvent(CART);
@@ -839,6 +840,51 @@ describe('InAppController', () => {
       expect(h.presenter.ids).toEqual(['c1', 'c1']);
     });
 
+    it('shows what waits at once when a link does not leave the page (mailto, tel, an app scheme)', async () => {
+      for (const url of ['mailto:a@b.example', 'tel:+100', 'myapp://x']) {
+        const h = harness();
+        await started(h, [campaign({ caps: { session: null } })]);
+        h.controller.onEvent(CART);
+        h.controller.onEvent(CART);
+        h.presenter.finish({ kind: 'clicked', buttonId: 'b1', action: { type: 'open_url', url } });
+        await settle();
+        expect(h.presenter.ids).toEqual(['c1', 'c1']);
+      }
+    });
+
+    it('syncs on return to the page only when the last sync is over a minute old', async () => {
+      const h = harness();
+      await started(h, []);
+      h.controller.onForeground();
+      await settle();
+      expect(h.syncs).toHaveLength(1);
+      h.clock.advance(61_000);
+      h.controller.onForeground();
+      await settle();
+      expect(h.syncs).toHaveLength(2);
+    });
+
+    it('handles an event that starts a new session during a sync after its app_open', async () => {
+      const h = harness();
+      await started(h, [
+        campaign({ id: 'open', priority: 1, triggers: [{ type: 'app_open' }], caps: { session: null } }),
+        campaign({ id: 'cart', priority: 9, caps: { session: null } }),
+      ]);
+      h.controller.onEvent({ type: 'app_open' });
+      h.presenter.finish({ kind: 'dismissed', reason: 'close_button' });
+      await settle();
+
+      h.state.session = 's2';
+      h.clock.advance(16 * 60_000);
+      let release: (result: SyncResult) => void = () => undefined;
+      h.state.response = new Promise((resolve) => (release = resolve));
+      h.controller.onEvent(CART);
+      expect(h.presenter.ids).toEqual(['open']);
+      release({ ok: true, body: { unchanged: true, server_time: iso(h.clock.now()) } });
+      await settle();
+      expect(h.presenter.ids).toEqual(['open', 'open']);
+    });
+
     it('closes a message the host discards from onShown', async () => {
       const h = harness();
       await started(h, [campaign()]);
@@ -891,6 +937,7 @@ describe('InAppController', () => {
       h.controller.pause();
       h.controller.onEvent(CART);
       h.respond([campaign({ id: 'c2', delay_seconds: 60 })], { campaigns_changed_at: 'c2' });
+      h.clock.advance(61_000);
       h.controller.onForeground();
       await settle();
       h.controller.resume();
@@ -916,6 +963,7 @@ describe('InAppController', () => {
       await started(h, [campaign()]);
       h.controller.onEvent(CART);
       h.respond([campaign()], { test_messages: [campaign({ id: 't1' })], campaigns_changed_at: 'c2' });
+      h.clock.advance(61_000);
       h.controller.onForeground();
       await settle();
       expect(h.presenter.ids).toEqual(['c1']);
@@ -934,6 +982,13 @@ describe('InAppController', () => {
       h.controller.onForeground();
       await settle();
       expect(h.presenter.ids).toEqual(['t1']);
+    });
+
+    it('drops a test message with an action this SDK cannot perform', async () => {
+      const h = harness();
+      const button = { id: 'b1', text: 'Rate', action: { type: 'request_app_rating' } };
+      await started(h, [], { test_messages: [campaign({ id: 't1', content: { buttons: [button] } })] });
+      expect(h.presenter.ids).toEqual([]);
     });
 
     it('holds a test message while the host has paused messages or is on an excluded screen', async () => {
@@ -963,6 +1018,7 @@ describe('InAppController', () => {
       await started(h, [campaign()]);
       h.controller.onEvent(CART);
       for (const [id, stamp] of [['t1', 'c2'], ['t2', 'c3']] as const) {
+        h.clock.advance(61_000);
         h.respond([campaign()], { test_messages: [campaign({ id })], campaigns_changed_at: stamp });
         h.controller.onForeground();
         await settle();
@@ -1431,6 +1487,7 @@ describe('InAppController', () => {
       h.presenter.draws = false;
       const page = await shown(h, [html()]);
       h.respond([]);
+      h.clock.advance(61_000);
       h.controller.onForeground();
       await settle();
       expect(page.eligible()).toBe(false);

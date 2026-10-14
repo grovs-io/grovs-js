@@ -43,6 +43,21 @@ describe('BannerView', () => {
     view.remove();
   });
 
+  it('is a labelled region whose close button has a 44px target and a visible focus ring', () => {
+    const { view } = make();
+    view.mount();
+    const root = document.getElementById(HOST_ID)!.shadowRoot!;
+    const bar = root.querySelector('.bar')!;
+    expect(bar.getAttribute('role')).toBe('region');
+    expect(bar.getAttribute('aria-label')).toBe('Get the app');
+    // jsdom has no constructed sheets, so the styles land in a <style>.
+    const css = root.querySelector('style')?.textContent ?? '';
+    expect(css).toMatch(/\.close\s*\{[^}]*width:\s*44px/);
+    expect(css).toMatch(/\.close\s*\{[^}]*line-height:\s*44px/);
+    expect(css).toMatch(/\.close:focus-visible\s*\{[^}]*outline:/);
+    view.remove();
+  });
+
   it('swaps the href', () => {
     const { view } = make();
     view.mount();

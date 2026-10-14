@@ -1,4 +1,4 @@
-import { IN_APP_EVENT_NAMES, RESERVED_EVENT_NAMES } from '../contract/event-contract';
+import { MESSAGE_EVENT_NAMES, RESERVED_EVENT_NAMES } from '../contract/event-contract';
 import type { Clock } from '../core/clock';
 import type { SessionManager } from '../core/session';
 import { randomUUID } from '../core/uuid';
@@ -60,7 +60,7 @@ export class CustomEventsHandler {
     // The backend rejects these with a 400. Failing here, with the reason,
     // beats a rejection the integrator only sees in a dashboard that stays
     // empty.
-    if (RESERVED_EVENT_NAMES.has(trimmed) || IN_APP_EVENT_NAMES.has(trimmed)) {
+    if (RESERVED_EVENT_NAMES.has(trimmed) || MESSAGE_EVENT_NAMES.has(trimmed)) {
       this.deps.logger.warn(
         `"${trimmed}" is a reserved system event name and cannot be used with track(). ` +
           'Choose a different name.',

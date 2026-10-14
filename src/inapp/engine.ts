@@ -224,8 +224,7 @@ export class Engine {
   private supported(campaign: Campaign): boolean {
     if (campaign.format !== 1 || campaign.deliveryMode !== 'device') return false;
     if (campaign.reserved) return false;
-    if (this.device.unsupportedTemplates.includes(campaign.template)) return false;
-    return !actionTypes(campaign).some((type) => this.device.unsupportedActions.includes(type));
+    return fits(campaign, this.device);
   }
 
   private conditionsPass(campaign: Campaign, at: number): boolean {
@@ -297,6 +296,12 @@ function over(limit: number | null, count: number): boolean {
 
 function own(source: Record<string, unknown>, key: string): unknown {
   return Object.prototype.hasOwnProperty.call(source, key) ? source[key] : undefined;
+}
+
+/** Whether this device can draw the template and perform every action. */
+export function fits(campaign: Campaign, device: Device): boolean {
+  if (device.unsupportedTemplates.includes(campaign.template)) return false;
+  return !actionTypes(campaign).some((type) => device.unsupportedActions.includes(type));
 }
 
 function actionTypes(campaign: Campaign): string[] {

@@ -5,8 +5,13 @@ import { EventsHandler } from '../src/events/events-handler';
 import { __resetCoexistenceState } from '../src/compat/v1';
 import { FakeTransport } from './helpers/fake-transport';
 import { FakeStorage } from './helpers/fake-storage';
+import { HOST_ID } from '../src/smartBanner/view';
+import { RAW_BANNER } from './smartBanner/fixtures';
 
 describe('public facade', () => {
+  // The facade keeps an authenticated client across a same-settings configure(); each test starts unauthenticated.
+  beforeEach(() => Grovs.reset());
+
   it('exposes the v2 surface', () => {
     expect(typeof Grovs.configure).toBe('function');
     expect(typeof Grovs.generateLink).toBe('function');
@@ -139,6 +144,59 @@ describe('public facade', () => {
 
     const views = enqueue.mock.calls.filter(([event]) => event.eventName === 'screen_view');
     expect(views).toHaveLength(1);
+  });
+
+  it('a repeat configure() with the same settings keeps the shown banner and counts no second view', async () => {
+    sessionStorage.clear();
+    document.body.innerHTML = '';
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Mobile/15E148');
+    const fetchMock = vi.fn(async (url: string) =>
+      new Response(
+        JSON.stringify(
+          String(url).includes('/smart_banners') ? { smart_banners: [RAW_BANNER] } : { linksquared: 'v-1', has_smart_banners: true },
+        ),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const enqueue = vi.spyOn(EventsHandler.prototype, 'enqueue');
+    const onDeeplink = vi.fn();
+    const config = { apiKey: 'k', onDeeplink };
+
+    await Grovs.configure(config);
+    await new Promise((resolve) => setTimeout(resolve, 32));
+    const host = document.getElementById(HOST_ID);
+    expect(host).not.toBeNull();
+    const calls = fetchMock.mock.calls.length;
+
+    await expect(Grovs.configure({ ...config, onDeeplink: vi.fn() })).resolves.toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 32));
+    expect(document.getElementById(HOST_ID)).toBe(host);
+    expect(fetchMock.mock.calls.length).toBe(calls);
+    const views = enqueue.mock.calls.filter(([event]) => event.eventName === 'smart_banner_view');
+    expect(views).toHaveLength(1);
+
+    await Grovs.configure({ ...config, debugLevel: 'warn' });
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(calls);
+  });
+
+  it('a repeat configure() after setEnabled(false) builds an enabled client', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ linksquared: 'v-1' }), { status: 200 })),
+    );
+    const shutdown = vi.spyOn(GrovsClient.prototype, 'shutdown');
+    const config = { apiKey: 'k-enabled' };
+    await Grovs.configure(config);
+    Grovs.setEnabled(false);
+    shutdown.mockClear();
+
+    await expect(Grovs.configure(config)).resolves.toBe(true);
+    expect(shutdown).toHaveBeenCalledTimes(1);
+    expect(Grovs.isAuthenticated()).toBe(true);
+    const enqueue = vi.spyOn(EventsHandler.prototype, 'enqueue');
+    Grovs.track('after_reenable');
+    expect(enqueue.mock.calls.some(([event]) => event.eventName === 'after_reenable')).toBe(true);
   });
 
   // Two Grovs clients on one page is unsupported: it
