@@ -991,6 +991,13 @@ describe('InAppController', () => {
       expect(h.presenter.ids).toEqual([]);
     });
 
+    it('goes on to the next test message when one cannot be shown', async () => {
+      const h = harness();
+      const button = { id: 'b1', text: 'Rate', action: { type: 'request_app_rating' } };
+      await started(h, [], { test_messages: [campaign({ id: 't1', content: { buttons: [button] } }), campaign({ id: 't2' })] });
+      expect(h.presenter.ids).toEqual(['t2']);
+    });
+
     it('holds a test message while the host has paused messages or is on an excluded screen', async () => {
       const h = harness();
       h.controller.pause();

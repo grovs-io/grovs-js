@@ -77,7 +77,8 @@ describe('public facade', () => {
     await Grovs.configure({ apiKey: 'k' });
     expect(shutdown).not.toHaveBeenCalled();
 
-    await Grovs.configure({ apiKey: 'k' });
+    // Different settings: an identical repeat keeps the client instead.
+    await Grovs.configure({ apiKey: 'k', debugLevel: 'error' });
     expect(shutdown).toHaveBeenCalledTimes(1);
 
     shutdown.mockRestore();
@@ -113,7 +114,8 @@ describe('public facade', () => {
 
     await Grovs.configure({ apiKey: 'k' });
     Grovs.track('from_client_a');
-    await Grovs.configure({ apiKey: 'k' });
+    // Different settings, so the client is rebuilt rather than kept.
+    await Grovs.configure({ apiKey: 'k', debugLevel: 'error' });
 
     // An unload is pagehide then the hide; the request leaves from the hide.
     window.dispatchEvent(new Event('pagehide'));
@@ -140,7 +142,8 @@ describe('public facade', () => {
 
     document.title = 'Checkout';
     await Grovs.configure({ apiKey: 'k' });
-    await Grovs.configure({ apiKey: 'k' });
+    // Different settings, so the second call builds a new client and handler.
+    await Grovs.configure({ apiKey: 'k', debugLevel: 'error' });
 
     const views = enqueue.mock.calls.filter(([event]) => event.eventName === 'screen_view');
     expect(views).toHaveLength(1);
@@ -178,6 +181,19 @@ describe('public facade', () => {
 
     await Grovs.configure({ ...config, debugLevel: 'warn' });
     expect(fetchMock.mock.calls.length).toBeGreaterThan(calls);
+  });
+
+  it('a config that cannot be serialised still configures, and a repeat rebuilds the client', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ linksquared: 'v-1' }), { status: 200 })));
+    const dispose = vi.spyOn(GrovsClient.prototype, 'dispose');
+    const cyclic: Record<string, unknown> = {};
+    cyclic['self'] = cyclic;
+    const config = { apiKey: 'k-cyclic', extra: cyclic } as unknown as Parameters<typeof Grovs.configure>[0];
+
+    await expect(Grovs.configure(config)).resolves.toBe(true);
+    dispose.mockClear();
+    await expect(Grovs.configure(config)).resolves.toBe(true);
+    expect(dispose).toHaveBeenCalledTimes(1);
   });
 
   it('a repeat configure() after setEnabled(false) builds an enabled client', async () => {

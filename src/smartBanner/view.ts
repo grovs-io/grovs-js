@@ -57,7 +57,7 @@ export class BannerView {
     const bar = this.el('div', `bar ${banner.position}`);
     this.bar = bar;
     bar.setAttribute('role', 'region');
-    bar.setAttribute('aria-label', banner.title);
+    bar.setAttribute('aria-label', banner.title.trim() || 'Smart banner');
     const close = this.el('button', 'close') as HTMLButtonElement;
     close.type = 'button';
     close.setAttribute('aria-label', 'Close');

@@ -138,7 +138,8 @@ describe('InAppRenderer', () => {
 
     drawn[1]?.click();
     await settle();
-    expect(outcome.value).toMatchObject({ kind: 'clicked', buttonId: 'shop', action: { type: 'open_url' } });
+    // The filled link, not the template: the controller judges whether it leaves the page.
+    expect(outcome.value).toMatchObject({ kind: 'clicked', buttonId: 'shop', action: { type: 'open_url', url: 'https://acme.example/shoes' } });
     expect(visited).toEqual(['https://acme.example/shoes']);
     expect(document.getElementById('grovs-in-app')).toBeNull();
   });

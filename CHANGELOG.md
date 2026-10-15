@@ -22,26 +22,28 @@
   client and takes the new callbacks: no re-authentication, no identity re-push, and the smart
   banner no longer flickers or counts a second `smart_banner_view`. Different settings, or a client
   disabled with `setEnabled(false)`, still build a new client.
+- More reserved event names: `track()` refuses every name the backend rejects, now also
+  `push_open`, `push_delivered`, `push_held`, `in_app_held`, `journey_entered`, `journey_held`
+  and `journey_path`. Rename any custom event that uses them.
 - The bundle budget is 40 KB compressed, up from 39 KB, for the fixes below.
 
 ### Fixed
 
 - An in-app HTML message that is not ready within 5 s, most often because the host page's
-  Content-Security-Policy has no `'unsafe-inline'` in `script-src`, now reports `onError` with
+  Content-Security-Policy blocks inline scripts, now reports `onError` with
   `inAppDisplayFailed` (5) once, naming the CSP, instead of only a warning. See "In-app HTML
   messages and CSP" in the README.
 - A new session started during an in-app sync handles its `app_open` before the event that started
   it, not after.
 - A `mailto:`, `tel:` or app-scheme link in an in-app message no longer leaves the next waiting
-  message stuck until the page is hidden and shown again.
+  message stuck until the page is hidden and shown again. A personalised link is judged as filled in.
+- `Grovs.configure()` with a config that cannot be serialised (a circular value) no longer throws.
 - Escape closes an in-app HTML message while the focus is inside its frame.
 - In-app test messages with an action this SDK cannot perform (rating, push permission) are skipped
   as live campaigns are, instead of showing buttons that do nothing.
 - Smart banner: the close button has a 44px target and a visible keyboard focus ring, and the bar
-  is a labelled region.
+  is a labelled region ("Smart banner" when it has no title).
 - `reset()` also forgets `Grovs.smartBanner.hide()` on the current page, as documented.
-- `track()` refuses every name the backend rejects: also `push_open`, `push_delivered`,
-  `push_held`, `in_app_held`, `journey_entered`, `journey_held` and `journey_path`.
 
 ## 2.1.0 — 2026-10-06
 

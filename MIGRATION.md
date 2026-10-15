@@ -3,6 +3,15 @@
 v2 is a TypeScript rewrite. **Your existing v1 code keeps working** — the
 constructor and every callback method are preserved as a deprecated shim.
 
+## Upgrading to the next release (unreleased)
+
+- **More reserved event names.** `track()` refuses `push_open`,
+  `push_delivered`, `push_held`, `in_app_held`, `journey_entered`,
+  `journey_held` and `journey_path`; rename any custom event that uses them.
+- **HTML in-app messages cannot run under a nonce-, hash- or
+  `'strict-dynamic'`-based CSP**, since browsers then ignore `'unsafe-inline'`.
+  See "In-app HTML messages and CSP" in the README.
+
 ## Upgrading to 2.1.0
 
 2.1.0 is a minor version, but a few changes can be noticed:

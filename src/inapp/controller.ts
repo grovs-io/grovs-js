@@ -519,6 +519,7 @@ export class InAppController {
     const filled = campaign && fits(campaign, this.device()) ? render(campaign, { type: 'app_open' }, this.device().user) : null;
     if (!campaign || !filled || !('rendered' in filled)) {
       this.deps.logger.warn('In-app test message cannot be shown by this SDK');
+      this.showTest();
       return;
     }
     this.showing = campaign.id;

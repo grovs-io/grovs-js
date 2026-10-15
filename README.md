@@ -297,15 +297,20 @@ An HTML in-app message runs in a sandboxed `srcdoc` iframe, which inherits your
 page's Content-Security-Policy. The SDK cannot override it, so the policy must
 allow what the message uses:
 
-- `script-src 'unsafe-inline'`: the message's bridge and its own scripts are
-  inline. Without it the message never starts; the SDK skips it and reports
-  `onError` with `inAppDisplayFailed` (5) once, naming the CSP.
+- `script-src` must allow inline scripts: the message's bridge and its own
+  scripts are inline. That means `'unsafe-inline'` and no nonce, hash or
+  `'strict-dynamic'` in `script-src` (or in `default-src` when there is no
+  `script-src`): browsers ignore `'unsafe-inline'` when any of those is present.
+  So a nonce-, hash- or `'strict-dynamic'`-based policy cannot run HTML
+  messages at all. When blocked, the message never starts; the SDK skips it and
+  reports `onError` with `inAppDisplayFailed` (5) once, naming the CSP.
 - `img-src`, `media-src` and `font-src`: the hosts the message loads pictures,
   video and fonts from (your CDN, or `https:`). `img-src` also covers the
   pictures of the built-in templates.
 - `style-src 'unsafe-inline'` if the message uses `<style>` or `style=""`.
 
-The built-in templates need no script or style exception.
+The built-in templates need no script or style exception, so they work under
+any policy, including nonce-, hash- and `'strict-dynamic'`-based ones.
 
 ## Smart banner
 

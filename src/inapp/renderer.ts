@@ -551,7 +551,8 @@ export class InAppRenderer implements Presenter {
   }
 
   private act(open: Open, buttonId: string | null, action: Action, url: string | null): void {
-    open.finish({ kind: 'clicked', buttonId, action });
+    // Carries the filled link, so the controller judges where the person actually went.
+    open.finish({ kind: 'clicked', buttonId, action: url === null ? action : { ...action, url } });
     if (action.type !== 'open_url' || url === null) return;
     try {
       this.navigate(url);

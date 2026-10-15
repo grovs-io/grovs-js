@@ -43,6 +43,14 @@ describe('BannerView', () => {
     view.remove();
   });
 
+  it('keeps a label when the title is blank', () => {
+    const view = new BannerView(document, bannerConfig({ title: ' ' }), { onClick: vi.fn(), onClose: vi.fn() });
+    view.mount();
+    const bar = document.getElementById(HOST_ID)!.shadowRoot!.querySelector('.bar')!;
+    expect(bar.getAttribute('aria-label')).toBe('Smart banner');
+    view.remove();
+  });
+
   it('is a labelled region whose close button has a 44px target and a visible focus ring', () => {
     const { view } = make();
     view.mount();

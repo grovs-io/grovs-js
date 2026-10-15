@@ -65,8 +65,13 @@ const facade = {
     // client. Construct after, or the new queue loads before the old one persists.
     resolveConfig(config);
     // Same settings again (a per-page call): keep the client, so the banner neither flickers nor counts again.
-    const settings = JSON.stringify(config);
-    if (client?.isAuthenticated() && client.isEnabled && settings === configured) {
+    let settings = '';
+    try {
+      settings = JSON.stringify(config);
+    } catch {
+      // Unserialisable (a cycle): never matches, so the client is rebuilt.
+    }
+    if (settings && client?.isAuthenticated() && client.isEnabled && settings === configured) {
       client.adopt(config);
       return true;
     }
