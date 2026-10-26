@@ -183,9 +183,12 @@ test.describe('in-app messages', () => {
     await page.getByRole('dialog').getByRole('button', { name: 'Go' }).click();
     await page.waitForURL('https://acme.example/landing');
     // Not back on the host: WebKit fires no pagehide here, so only a send before leaving counts.
-    await expect.poll(() => backend.named('in_app_clicked').length).toBe(2);
-    expect(backend.named('in_app_viewed')).toHaveLength(2);
-    expect(backend.named('in_app_clicked').map((event) => (event['properties'] as Json)['button_id'])).toEqual(['no', 'go']);
+    // The send before leaving and the hide's keepalive send can both carry an event; the backend
+    // keeps one row per event_id, so count distinct events, as it does.
+    const distinct = (name: string) => [...new Map(backend.named(name).map((event) => [event['event_id'], event])).values()];
+    await expect.poll(() => distinct('in_app_clicked').length).toBe(2);
+    expect(distinct('in_app_viewed')).toHaveLength(2);
+    expect(distinct('in_app_clicked').map((event) => (event['properties'] as Json)['button_id'])).toEqual(['no', 'go']);
   });
 
   test('a portrait-only message waits for portrait, and closes when the device turns', async ({ page }) => {
