@@ -22,14 +22,9 @@ has no runtime dependencies.
 
 ## Installation
 
-Until 2.0.0 is on the npm registry, install it from the GitHub release:
-
 ```bash
-npm install https://github.com/grovs-io/grovs-js/releases/download/2.0.0/grovs-2.0.0.tgz
+npm install grovs --save
 ```
-
-Once it is on npm, this becomes `npm install grovs --save`. The package name is the
-same either way, so the import does not change:
 
 ```javascript
 import Grovs from "grovs";
