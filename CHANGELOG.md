@@ -1,51 +1,6 @@
 # Changelog
 
-## Unreleased
-
-### Added
-
-- In-app orientation: a campaign can be for portrait or landscape only. It shows only while the
-  screen is held that way and closes if it turns, reported to `onDismissed` with reason
-  `orientation`, which the dashboard does not count as a dismissal. On the web, a browser window
-  wider than it is tall counts as landscape.
-
-### Changed
-
-- In-app HTML banners may take up to 45% of a short screen (500px or less, like a phone on its
-  side), up from 30%.
-- In-app HTML: `grovs.open()` (and a link) opens only within 2 seconds of a tap in the message;
-  later, for example after a slow network call, it is ignored.
-- In-app sync on returning to the page (tab shown, or window focused) happens only when the last
-  sync is over a minute old. A window brought forward from behind another now counts as a return,
-  so a test message sent from the dashboard shows without waiting for the 15 minute sync.
-- `Grovs.configure()` called again with the same settings on an authenticated client keeps that
-  client and takes the new callbacks: no re-authentication, no identity re-push, and the smart
-  banner no longer flickers or counts a second `smart_banner_view`. Different settings, or a client
-  disabled with `setEnabled(false)`, still build a new client.
-- More reserved event names: `track()` refuses every name the backend rejects, now also
-  `push_open`, `push_delivered`, `push_held`, `in_app_held`, `journey_entered`, `journey_held`
-  and `journey_path`. Rename any custom event that uses them.
-- The bundle budget is 40 KB compressed, up from 39 KB, for the fixes below.
-
-### Fixed
-
-- An in-app HTML message that is not ready within 5 s, most often because the host page's
-  Content-Security-Policy blocks inline scripts, now reports `onError` with
-  `inAppDisplayFailed` (5) once, naming the CSP, instead of only a warning. See "In-app HTML
-  messages and CSP" in the README.
-- A new session started during an in-app sync handles its `app_open` before the event that started
-  it, not after.
-- A `mailto:`, `tel:` or app-scheme link in an in-app message no longer leaves the next waiting
-  message stuck until the page is hidden and shown again. A personalised link is judged as filled in.
-- `Grovs.configure()` with a config that cannot be serialised (a circular value) no longer throws.
-- Escape closes an in-app HTML message while the focus is inside its frame.
-- In-app test messages with an action this SDK cannot perform (rating, push permission) are skipped
-  as live campaigns are, instead of showing buttons that do nothing.
-- Smart banner: the close button has a 44px target and a visible keyboard focus ring, and the bar
-  is a labelled region ("Smart banner" when it has no title).
-- `reset()` also forgets `Grovs.smartBanner.hide()` on the current page, as documented.
-
-## 2.1.0 — 2026-10-06
+## 2.1.0 — 2026-10-26
 
 ### Upgrade notes
 
@@ -85,6 +40,10 @@ A minor version, but check these before upgrading (details in [MIGRATION.md](MIG
 - The `SmartBannerLinkData` type export.
 - Smart banner support for hash-routed sites: a `#/…` or `#!/…` hash is the
   page path for URL patterns, `page_path` and page changes.
+- In-app orientation: a campaign can be for portrait or landscape only. It shows only while the
+  screen is held that way and closes if it turns, reported to `onDismissed` with reason
+  `orientation`, which the dashboard does not count as a dismissal. On the web, a browser window
+  wider than it is tall counts as landscape.
 
 ### Changed
 
@@ -93,6 +52,21 @@ A minor version, but check these before upgrading (details in [MIGRATION.md](MIG
 - SPA navigation tracking moved into a shared observer so the banner follows
   route changes with `autoTrackScreenViews: false`. Screen tracking behaves as
   before.
+- In-app HTML banners may take up to 45% of a short screen (500px or less, like a phone on its
+  side), up from 30%.
+- In-app HTML: `grovs.open()` (and a link) opens only within 2 seconds of a tap in the message;
+  later, for example after a slow network call, it is ignored.
+- In-app sync on returning to the page (tab shown, or window focused) happens only when the last
+  sync is over a minute old. A window brought forward from behind another now counts as a return,
+  so a test message sent from the dashboard shows without waiting for the 15 minute sync.
+- `Grovs.configure()` called again with the same settings on an authenticated client keeps that
+  client and takes the new callbacks: no re-authentication, no identity re-push, and the smart
+  banner no longer flickers or counts a second `smart_banner_view`. Different settings, or a client
+  disabled with `setEnabled(false)`, still build a new client.
+- More reserved event names: `track()` refuses every name the backend rejects, now also
+  `push_open`, `push_delivered`, `push_held`, `in_app_held`, `journey_entered`, `journey_held`
+  and `journey_path`. Rename any custom event that uses them.
+- The bundle budget is 40 KB compressed, up from 39 KB, for the fixes below.
 
 ### Fixed
 
@@ -101,6 +75,21 @@ A minor version, but check these before upgrading (details in [MIGRATION.md](MIG
   tab-local caches too, not only on the tab that owns the durable wipe.
 - The smart banner redraws, and the CSS-variable gap is recomputed, after a
   Turbo/Hotwire/pjax body swap removes its host element outside the SDK.
+- An in-app HTML message that is not ready within 5 s, most often because the host page's
+  Content-Security-Policy blocks inline scripts, now reports `onError` with
+  `inAppDisplayFailed` (5) once, naming the CSP, instead of only a warning. See "In-app HTML
+  messages and CSP" in the README.
+- A new session started during an in-app sync handles its `app_open` before the event that started
+  it, not after.
+- A `mailto:`, `tel:` or app-scheme link in an in-app message no longer leaves the next waiting
+  message stuck until the page is hidden and shown again. A personalised link is judged as filled in.
+- `Grovs.configure()` with a config that cannot be serialised (a circular value) no longer throws.
+- Escape closes an in-app HTML message while the focus is inside its frame.
+- In-app test messages with an action this SDK cannot perform (rating, push permission) are skipped
+  as live campaigns are, instead of showing buttons that do nothing.
+- Smart banner: the close button has a 44px target and a visible keyboard focus ring, and the bar
+  is a labelled region ("Smart banner" when it has no title).
+- `reset()` also forgets `Grovs.smartBanner.hide()` on the current page, as documented.
 
 ### Deprecated
 
