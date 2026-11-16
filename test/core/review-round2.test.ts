@@ -100,7 +100,7 @@ describe('setEnabled(false) is enforced everywhere', () => {
 });
 
 describe('legacy unscoped state', () => {
-  it('carries the launch counters in and drops the ownerless queue', async () => {
+  it('drops the launch counter and the ownerless queue, carrying neither forward', async () => {
     localStorage.clear();
     localStorage.setItem('grovs_opens', '5');
     localStorage.setItem(
@@ -115,13 +115,13 @@ describe('legacy unscoped state', () => {
 
     expect(localStorage.getItem('grovs_opens')).toBeNull();
     expect(localStorage.getItem('grovs_events')).toBeNull();
-    expect(localStorage.getItem(scopedKey('grovs_opens', 'k'))).toBe('5');
+    expect(localStorage.getItem(scopedKey('grovs_opens', 'k'))).toBeNull();
     expect(localStorage.getItem(scopedKey('grovs_events', 'k'))).toBeNull();
     client.dispose();
     localStorage.clear();
   });
 
-  it('keeps the legacy key when the copy is refused', () => {
+  it('keeps the legacy key when localStorage itself is unavailable', () => {
     localStorage.clear();
     localStorage.setItem('grovs_opens', '5');
     const setItem = Storage.prototype.setItem;

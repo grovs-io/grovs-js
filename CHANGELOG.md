@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Upgrade notes
+
+Check this before upgrading (details in [MIGRATION.md](MIGRATION.md)):
+
+- Web no longer sends `install`, `reinstall` or `reactivation`; only `app_open` at launch. The
+  backend drops them from older SDKs too. Segments, journeys and experiment goals built on those
+  events stop matching web visitors; use `app_open` for web.
+
 ## 2.1.0 — 2026-10-26
 
 ### Upgrade notes

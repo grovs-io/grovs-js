@@ -515,7 +515,7 @@ Grovs.setDebugLevel("info");
   localStorage, because Safari's ITP clamps script-written cookies to 7 days
   regardless of the expiry requested. That covers visitors returning within the
   window, but ITP can still evict script-writable storage for genuinely dormant
-  ones — so Safari install counts carry a small known over-count.
+  ones — so Safari new-visitor counts carry a small known over-count.
 - **Delivery is at-least-once.** The final batch is sent with `keepalive`
   when the page is hidden and stays stored until acknowledged, so a page that
   goes away before the answer sends it again from the next load. No batch is

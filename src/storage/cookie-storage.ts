@@ -18,7 +18,7 @@ export class CookieStorage implements Storage {
       if (host !== bare && !host.endsWith(`.${bare}`)) {
         // Fatal-but-silent config error, same class as the B9 linked-domain
         // 422: identity stops persisting and every visit counts as a new
-        // install. reportErrorOnce so it survives the default 'error' level
+        // visitor. reportErrorOnce so it survives the default 'error' level
         // and reaches onError — a warn() is filtered out for every integrator
         // who has not opted into debugLevel: 'warn'. authenticationFailed is
         // the closest of the four contract codes (spec A5), matching B9.

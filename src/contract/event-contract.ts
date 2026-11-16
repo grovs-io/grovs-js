@@ -68,14 +68,7 @@ export const ENRICHMENT_KEYS = [
   'tags',
 ] as const;
 
-export type SystemEventName =
-  | 'app_open'
-  | 'view'
-  | 'open'
-  | 'install'
-  | 'reinstall'
-  | 'time_spent'
-  | 'reactivation';
+export type SystemEventName = 'app_open' | 'view' | 'open' | 'time_spent';
 
 interface EnrichmentFields {
   event_id: string;

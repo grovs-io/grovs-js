@@ -11,6 +11,10 @@ constructor and every callback method are preserved as a deprecated shim.
 - **HTML in-app messages cannot run under a nonce-, hash- or
   `'strict-dynamic'`-based CSP**, since browsers then ignore `'unsafe-inline'`.
   See "In-app HTML messages and CSP" in the README.
+- **Web no longer reports `install`, `reinstall` or `reactivation`.** Only an
+  app can be installed; a browser visit sends `app_open`. Installs, segments,
+  journeys and experiment goals built on those events stop counting web
+  visitors. Use `app_open` (or unique visitors) for web.
 
 ## Upgrading to 2.1.0
 
@@ -173,8 +177,7 @@ await Grovs.flush();         // drain before a hard navigation
 
 v1 shipped an event queue whose `addEvent()` had no callers, so web reported
 zero installs, opens and engagement time. v2 emits the full set:
-`install`/`reinstall`, `app_open`, `time_spent`, `reactivation`, plus your
-custom events.
+`app_open`, `time_spent`, plus your custom events.
 
 **Expect a step change in your dashboards on the day you upgrade.** The
 series was flat zero before; it will not be afterwards. That is the defect
@@ -186,7 +189,7 @@ being fixed, but it looks like an anomaly if nobody was told.
   localStorage, because Safari's ITP clamps script-written cookies to 7 days
   regardless of the expiry requested. That covers visitors who return within
   the window; ITP can still evict script-writable storage for genuinely
-  dormant ones, so Safari install counts carry a small known over-count.
+  dormant ones, so Safari new-visitor counts carry a small known over-count.
 - **Purchases need Enterprise.** `logCustomPurchase` calls an endpoint that
   only exists when the backend runs with `GROVS_EE=true`. On a standard
   deployment it reports `eventDispatchFailed` naming the requirement rather

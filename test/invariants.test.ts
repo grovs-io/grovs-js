@@ -244,13 +244,13 @@ describe('one visit reports one app_open', () => {
     const first = make({}, storage);
     first.transport.enqueue(AUTH_OK).enqueue(PAYLOAD_NONE);
     await first.client.configure();
-    first.client['startEventPipeline'](false);
+    first.client['startEventPipeline']();
     first.client.dispose();
 
     const second = make({}, storage);
     second.transport.enqueue(AUTH_OK).enqueue(PAYLOAD_NONE);
     await second.client.configure();
-    second.client['startEventPipeline'](false);
+    second.client['startEventPipeline']();
     second.client.shutdown();
 
     // Counted on the wire, not in the queue: the replacement delivers what
@@ -263,7 +263,7 @@ describe('one visit reports one app_open', () => {
       .filter((event) => event['event'] === 'app_open');
     expect(opens).toHaveLength(1);
     // An injected store is a test harness and is used unscoped.
-    expect(storage.get('grovs_opens')).toBe('1');
+    expect(storage.get('grovs_opens')).toBeNull();
     second.client.dispose();
   });
 });
@@ -319,7 +319,7 @@ describe('the launch guard is per page load and per project', () => {
     const first = make({ apiKey: 'project-a' }, storageA);
     first.transport.enqueue(AUTH_OK).enqueue(PAYLOAD_NONE);
     await first.client.configure();
-    first.client['startEventPipeline'](false);
+    first.client['startEventPipeline']();
     first.client.shutdown();
     first.client.dispose();
 
@@ -327,12 +327,12 @@ describe('the launch guard is per page load and per project', () => {
     const second = make({ apiKey: 'project-b' }, storageB);
     second.transport.enqueue(AUTH_OK).enqueue(PAYLOAD_NONE);
     await second.client.configure();
-    second.client['startEventPipeline'](false);
+    second.client['startEventPipeline']();
     second.client.shutdown();
 
     expect(stored(storageA).filter((e) => e.event === 'app_open')).toHaveLength(1);
     expect(stored(storageB).filter((e) => e.event === 'app_open')).toHaveLength(1);
-    expect(storageB.get('grovs_opens')).toBe('1');
+    expect(storageB.get('grovs_opens')).toBeNull();
     second.client.dispose();
   });
 });
@@ -681,7 +681,7 @@ describe('the first visit does not wait for a tick', () => {
       .requestsTo('/events/batch')
       .flatMap((r) => (r.body as { events: Record<string, unknown>[] }).events)
       .map((e) => e['event']);
-    expect(sent).toContain('install');
+    expect(sent).not.toContain('install');
     expect(sent).toContain('app_open');
     client.dispose();
   });

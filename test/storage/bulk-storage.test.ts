@@ -242,7 +242,7 @@ describe('client storage wiring', () => {
       .flatMap((r) => (r.body as { events: Record<string, unknown>[] }).events)
       .map((e) => e['event']);
 
-    expect(sent.filter((e) => e === 'install')).toHaveLength(1);
+    expect(sent).not.toContain('install');
     expect(sent.filter((e) => e === 'app_open')).toHaveLength(1);
     client.shutdown();
   });

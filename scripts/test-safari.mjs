@@ -298,7 +298,7 @@ test('launch events arrive when attribution settles, before the five-second time
   assert.equal(await configure(), true);
   await until(() => named('app_open').length === 1, 'launch batch waited instead of sending after attribution', 2_000);
   const launch = received.find((r) => r.path === '/events/batch' && r.body.events.some((e) => e.event === 'app_open'));
-  assert.deepEqual(launch.body.events.map((e) => e.event), ['install', 'app_open']);
+  assert.deepEqual(launch.body.events.map((e) => e.event), ['app_open']);
 });
 
 test('two successive five-second ticks deliver newly queued events', { timeout: 20_000 }, async () => {
@@ -358,7 +358,7 @@ test('cookie eviction recovers identity from localStorage; full eviction starts 
   await flush();
   assert.equal(lastAuth().headers.linksquared, undefined);
   assert.notEqual(lastAuth().answer.linksquared, original);
-  assert.ok(received.slice(start).some((r) => r.body.events?.some((e) => e.event === 'install')));
+  assert.ok(received.slice(start).some((r) => r.body.events?.some((e) => e.event === 'app_open')));
 });
 
 test('refused storage writes still allow in-memory tracking with a stable session', async () => {

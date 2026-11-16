@@ -44,6 +44,7 @@ import { SmartBannerController } from '../smartBanner/controller';
 import { BannerStore, DISMISSED_KEY } from '../smartBanner/store';
 
 export { IDENTITY_KEY as LINKSQUARED_STORAGE_KEY };
+// No longer written or carried on legacy adoption; names kept only so reset() clears them.
 const OPENS_KEY = 'grovs_opens';
 const LAST_START_KEY = 'grovs_last_start';
 
@@ -73,10 +74,6 @@ const BULK_KEYS = [
  * could read it. The queue is merged separately, which keeps both sides.
  */
 const SWITCH_KEYS = BULK_KEYS.filter((key) => key !== QUEUE_STORAGE_KEY);
-
-/** The only legacy (unscoped) state carried into a project scope — see
- *  adoptLegacyState. */
-const LEGACY_CARRIED: readonly string[] = [OPENS_KEY, LAST_START_KEY];
 
 /** Authentication retries after a network or server failure: bounded, so a
  *  page left open does not poll a dead backend for ever. */
@@ -455,7 +452,7 @@ export class GrovsClient {
     // the existing value must be read back before authenticating. The
     // constructor read from the memory store, which was empty, so without
     // this a returning visitor authenticates with no LINKSQUARED header, the
-    // backend mints a fresh identifier, and they are counted as a new install
+    // backend mints a fresh identifier, and they are counted as a new visitor
     // rather than recognised.
     if (!this.identityStore && !this.storageInjected) {
       this.identityStore = new IdentityStore(this.config.cookieDomain, this.logger);
@@ -616,10 +613,6 @@ export class GrovsClient {
     const body = (response.body ?? {}) as Record<string, unknown>;
     const linksquaredId = typeof body['linksquared'] === 'string' ? body['linksquared'] : null;
 
-    // Read before writing: whether an identifier already existed is what
-    // decides install versus reinstall, and the write below destroys the answer.
-    const hadIdentity = this.context.linksquaredId !== null;
-
     if (linksquaredId) {
       this.context.linksquaredId = linksquaredId;
       this.writeIdentity(linksquaredId);
@@ -644,7 +637,7 @@ export class GrovsClient {
     this.hasSmartBanners = body['has_smart_banners'] === true;
 
     if (superseded()) return false;
-    if (this.autoStartEvents) this.startEventPipeline(hadIdentity);
+    if (this.autoStartEvents) this.startEventPipeline();
     this.startSmartBanner();
 
     let resolved = false;
@@ -695,15 +688,8 @@ export class GrovsClient {
     if (this.config.smartBanner && this.hasSmartBanners && this.enabled) this.smartBanner.start();
   }
 
-  /**
-   * Emits the launch events and starts the flush timers.
-   *
-   * The open count and last-start stamp are read before being written, because
-   * both decide which launch events fire: opens === 0 means install (or
-   * reinstall, if an identifier survived), and a last start more than seven
-   * days ago means reactivation.
-   */
-  private startEventPipeline(hadIdentity: boolean): void {
+  /** Emits the launch event and starts the flush timers. */
+  private startEventPipeline(): void {
     // React strict mode and hot reload both call configure() twice. Without
     // this, launch events are emitted twice and the second start() overwrites
     // the interval handles, leaking two timers that flush forever. The
@@ -721,18 +707,7 @@ export class GrovsClient {
     }
     launchEmitted.add(this.storageScope);
 
-    const opens = Number(this.storage.get(OPENS_KEY) ?? '0');
-    const rawLastStart = this.storage.get(LAST_START_KEY);
-    const lastStart = rawLastStart === null ? null : Number(rawLastStart);
-
-    this.storage.set(OPENS_KEY, String((Number.isFinite(opens) ? opens : 0) + 1));
-    this.storage.set(LAST_START_KEY, String(this.clock.now()));
-
-    this.events.start({
-      hasExistingIdentity: hadIdentity,
-      opens: Number.isFinite(opens) ? opens : 1,
-      lastStart: lastStart !== null && Number.isFinite(lastStart) ? lastStart : null,
-    });
+    this.events.start();
     this.openedNow = true;
     this.lifecycle.start();
     if (this.config.autoTrackScreenViews) this.screens.start();
@@ -911,19 +886,14 @@ export class GrovsClient {
 
   /**
    * Builds written before storage was scoped left their state under bare
-   * keys. The launch counters carry over — losing them costs a returning
-   * visitor a spurious reinstall, since the identifier is shared and opens
-   * would read 0. Everything else (queue, session, path) belonged to
-   * whichever project wrote it, which cannot be known now, so it is dropped
-   * rather than sent under this one. Removal waits for a confirmed copy.
+   * keys. None of it is carried into this scope — the launch counters are
+   * dead, and everything else belonged to whichever project wrote it, which
+   * cannot be known now — so every bare key found is just removed.
    */
   private adoptLegacyState(durable: Storage): Storage {
     const scoped = this.scoped(durable);
     for (const key of BULK_KEYS) {
-      const legacy = durable.get(key);
-      if (legacy === null) continue;
-      const carry = LEGACY_CARRIED.includes(key) && scoped.get(key) === null;
-      if (!carry || scoped.set(key, legacy)) durable.remove(key);
+      if (durable.get(key) !== null) durable.remove(key);
     }
     return scoped;
   }

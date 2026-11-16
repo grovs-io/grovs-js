@@ -11,10 +11,9 @@ export const LINKSQUARED_STORAGE_KEY = 'linksquared';
  *
  * Safari's ITP clamps any cookie written through document.cookie to 7 days
  * regardless of the expiry requested — v1 asked for the year 9999
- * (grovs_device_details.js:74) and got a week. Because install-versus-reinstall
- * is decided by whether an identifier exists, a cookie-only identity reports a
- * fresh `install` for every Safari visitor returning after a week: permanently,
- * invisibly, and in the direction that flatters the numbers.
+ * (grovs_device_details.js:74) and got a week. A cookie-only identity would
+ * make a returning Safari visitor look like a new visitor after a week:
+ * permanently, invisibly, and in the direction that flatters the numbers.
  *
  * Reads prefer the cookie and fall back to the mirror, rewriting the cookie
  * when only the mirror survived. This does not defeat ITP — Safari can also

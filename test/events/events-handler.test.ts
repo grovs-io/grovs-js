@@ -52,40 +52,10 @@ function batchBodies(transport: FakeTransport): Record<string, unknown>[] {
 describe('EventsHandler system events', () => {
   beforeEach(() => vi.useRealTimers());
 
-  it('logs install on a first-ever visit', () => {
+  // Only an app can be installed: web never reports install, reinstall or reactivation.
+  it('logs only app_open at launch', () => {
     const { handler, queue } = harness();
-    handler.start({ hasExistingIdentity: false, opens: 0, lastStart: null });
-    handler.stop();
-    expect(queue.all().map((e) => e.event)).toEqual(['install', 'app_open']);
-  });
-
-  // iOS decides this by whether a keychain identifier survived the uninstall.
-  it('logs reinstall when an identifier already existed', () => {
-    const { handler, queue } = harness();
-    handler.start({ hasExistingIdentity: true, opens: 0, lastStart: null });
-    handler.stop();
-    expect(queue.all().map((e) => e.event)).toEqual(['reinstall', 'app_open']);
-  });
-
-  it('logs only app_open on a returning visit', () => {
-    const { handler, queue } = harness();
-    handler.start({ hasExistingIdentity: true, opens: 5, lastStart: null });
-    handler.stop();
-    expect(queue.all().map((e) => e.event)).toEqual(['app_open']);
-  });
-
-  it('logs reactivation after seven days away', () => {
-    const { handler, queue, clock } = harness();
-    const eightDaysAgo = clock.now() - 8 * 24 * 60 * 60_000;
-    handler.start({ hasExistingIdentity: true, opens: 3, lastStart: eightDaysAgo });
-    handler.stop();
-    expect(queue.all().map((e) => e.event)).toEqual(['reactivation', 'app_open']);
-  });
-
-  it('does not log reactivation after six days', () => {
-    const { handler, queue, clock } = harness();
-    const sixDaysAgo = clock.now() - 6 * 24 * 60 * 60_000;
-    handler.start({ hasExistingIdentity: true, opens: 3, lastStart: sixDaysAgo });
+    handler.start();
     handler.stop();
     expect(queue.all().map((e) => e.event)).toEqual(['app_open']);
   });
@@ -269,15 +239,15 @@ describe('EventsHandler cadence', () => {
     vi.useFakeTimers();
     const { handler, transport } = harness();
     handler.onPathResolved(null);
-    handler.start({ hasExistingIdentity: false, opens: 0, lastStart: null });
+    handler.start();
 
     expect(transport.requestsTo('/events/batch')).toHaveLength(0);
 
     await vi.advanceTimersByTimeAsync(5000);
     expect(transport.requestsTo('/events/batch')).toHaveLength(1);
 
-    // install and app_open leave together, which is the point of the leeway.
-    expect(batchBodies(transport).map((b) => b['event'])).toEqual(['install', 'app_open']);
+    // app_open waits out the leeway too.
+    expect(batchBodies(transport).map((b) => b['event'])).toEqual(['app_open']);
 
     handler.stop();
     vi.useRealTimers();
@@ -287,7 +257,7 @@ describe('EventsHandler cadence', () => {
     vi.useFakeTimers();
     const { handler, transport } = harness();
     handler.onPathResolved(null);
-    handler.start({ hasExistingIdentity: true, opens: 2, lastStart: null });
+    handler.start();
 
     await vi.advanceTimersByTimeAsync(5000);
     const afterLeeway = transport.requestsTo('/events/batch').length;
@@ -304,7 +274,7 @@ describe('EventsHandler cadence', () => {
     vi.useFakeTimers();
     const { handler, transport } = harness();
     handler.onPathResolved(null);
-    handler.start({ hasExistingIdentity: true, opens: 2, lastStart: null });
+    handler.start();
     handler.stop();
 
     await vi.advanceTimersByTimeAsync(120_000);

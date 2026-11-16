@@ -183,21 +183,8 @@ export class EventsHandler {
     return merged.slice(0, ENRICHMENT_LIMITS.maxTags);
   }
 
-  /**
-   * Emits the events iOS emits at launch, following the same rules:
-   * install on a first-ever visit, reinstall when an identifier already
-   * existed, reactivation after seven days away, and app_open every time.
-   */
-  start(options: { hasExistingIdentity: boolean; opens: number; lastStart: number | null }): void {
-    if (options.opens === 0) {
-      this.log(options.hasExistingIdentity ? 'reinstall' : 'install');
-    }
-
-    if (options.lastStart !== null) {
-      const daysAway = (this.deps.clock.now() - options.lastStart) / (24 * 60 * 60_000);
-      if (daysAway >= 7) this.log('reactivation');
-    }
-
+  /** Emits app_open and starts the flush timers. Only an app can be installed. */
+  start(): void {
     this.log('app_open');
     this.startTimers();
   }
@@ -206,8 +193,8 @@ export class EventsHandler {
    *  taking over a visit that has already emitted them. */
   startTimers(): void {
     if (this.timer !== null) return;
-    // The leeway lets install and app_open leave in one request rather than
-    // two, which is why iOS waits before the first flush.
+    // The leeway lets app_open and the opening screen view leave in one
+    // request rather than two, which is why iOS waits before the first flush.
     this.leewayTimer = setTimeout(() => this.tick(), FIRST_BATCH_LEEWAY_MS);
     this.timer = setInterval(() => this.tick(), BATCH_INTERVAL_MS);
   }
@@ -291,8 +278,8 @@ export class EventsHandler {
     queuedBeforeAttribution.clear();
     this.pathResolved = true;
 
-    // The first visit's events go now, not on the next tick. install,
-    // app_open and the opening screen view are all queued by this point, and
+    // The first visit's events go now, not on the next tick. app_open and
+    // the opening screen view are both queued by this point, and
     // every flush before this one returned without sending because
     // attribution was not settled — so without this the opening batch waited
     // out a whole interval, and a visit shorter than that depended on the
@@ -466,7 +453,7 @@ export class EventsHandler {
       // page is gone before the answer, the next page load sends the batch
       // again; the backend's events table is a ReplacingMergeTree keyed on a
       // content-hash event_id, so the copy collapses. Losing the batch — the
-      // alternative, and for a short visit the install itself — does not.
+      // alternative, and for a short visit the app_open itself — does not.
       const ids = batch.map((event) => event.id);
       for (const id of ids) this.inFlightKeepalive.add(id);
       const request = this.deps.api
