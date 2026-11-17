@@ -3,14 +3,8 @@
 v2 is a TypeScript rewrite. **Your existing v1 code keeps working** — the
 constructor and every callback method are preserved as a deprecated shim.
 
-## Upgrading to the next release (unreleased)
+## Upgrading to 2.2.0
 
-- **More reserved event names.** `track()` refuses `push_open`,
-  `push_delivered`, `push_held`, `in_app_held`, `journey_entered`,
-  `journey_held` and `journey_path`; rename any custom event that uses them.
-- **HTML in-app messages cannot run under a nonce-, hash- or
-  `'strict-dynamic'`-based CSP**, since browsers then ignore `'unsafe-inline'`.
-  See "In-app HTML messages and CSP" in the README.
 - **Web no longer reports `install`, `reinstall` or `reactivation`.** Only an
   app can be installed; a browser visit sends `app_open`. Installs, segments,
   journeys and experiment goals built on those events stop counting web
@@ -32,12 +26,14 @@ constructor and every callback method are preserved as a deprecated shim.
 - **New `GrovsError` code 5, `inAppDisplayFailed`.** An exhaustive `switch` over
   the codes (for example with TypeScript's `never` check) needs a case for it.
 - **More reserved event names.** `track()` refuses `in_app_viewed`,
-  `in_app_clicked`, `in_app_dismissed`, `in_app_answered` and
-  `in_app_commented`; rename any custom event that uses them.
+  `in_app_clicked`, `in_app_dismissed`, `in_app_answered`, `in_app_commented`,
+  `push_open`, `push_delivered`, `push_held`, `in_app_held`, `journey_entered`,
+  `journey_held` and `journey_path`; rename any custom event that uses them.
 - **Bigger bundle.** About 15 KB more compressed (about 39 KB in all), for
   in-app messages and the smart banner, which ship in the one file.
-- **HTML in-app messages need a CSP that allows them.** See "In-app HTML
-  messages and CSP" in the README.
+- **HTML in-app messages need a CSP that allows them.** They cannot run under a
+  nonce-, hash- or `'strict-dynamic'`-based CSP, since browsers then ignore
+  `'unsafe-inline'`. See "In-app HTML messages and CSP" in the README.
 
 ## Read this first: two accessors now return different values
 

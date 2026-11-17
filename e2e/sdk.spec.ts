@@ -161,7 +161,7 @@ test.describe('Grovs SDK end to end', () => {
       configure: 'function',
       track: 'function',
       v1: 'function',
-      version: '2.1',
+      version: '2.2',
     });
   });
 
